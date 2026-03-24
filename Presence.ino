@@ -322,10 +322,10 @@ ZigbeeAnalog      zbFrequency     = ZigbeeAnalog(17);      // min number of seco
 //
 // These are the local variables that mirror the zibgee clusters above.
 //
-unsigned int      ha_Presence   = 0;   // This is a sensor "INPUT" from this device to Zibgee
-unsigned int      ha_Range      = 5;   // This is an output from Zibgee to this device to control range in meters 0..10
-unsigned int      ha_Brightness = 5;   //                              ..... to control brighness of night LED 0..10
-unsigned int      ha_Frequency  = 0;   //                              ..... to control max frequency of updates to Zibgee 0..10 min
+uint16_t      ha_Presence   = 0xFF; // This is a sensor "INPUT" from this device to Zibgee 0 false, 1 true, FF unset
+uint16_t      ha_Range      = 5;    // This is an output from Zibgee to this device to control range in meters 0..10
+uint16_t      ha_Brightness = 5;    //                              ..... to control brighness of night LED 0..10
+uint16_t      ha_Frequency  = 0;    //                              ..... to control max frequency of updates to Zibgee 0..10 min
 
 //
 // These are just useful debugging functions to display the attributes that HA has given us.
@@ -472,7 +472,7 @@ void setup(void)
      //
      // Initialize all the major variables that are sent to/from zigbee/HA
      //
-     ha_Presence   = 0;   // This is a sensor "INPUT" from this device to Zibgee
+     ha_Presence   = 0xFF;// This is a sensor "INPUT" from this device to Zibgee 0 false, 1 true, FF unset
      ha_Range      = 5;   // This is an output from Zibgee to this device to control range in meters 0..10
      ha_Brightness = 5;   //                              ..... to control brighness of night LED 0..10
      ha_Frequency  = 0;   //                              ..... to control max frequency of updates to Zibgee 0..10 min
@@ -541,6 +541,10 @@ void setup(void)
      //
      //
      if (debug_g) DPRINTF("Set mains power & identify callback\n");
+     zbPresence.setManufacturerAndModel(MFGR,MODL);
+     zbPresence.addBinaryInput();
+     zbPresence.setBinaryInputApplication(BINARY_INPUT_APPLICATION_TYPE_HVAC_OTHER);
+     zbPresence.setBinaryInputDescription("Presence");
      zbPresence.setPowerSource(ZB_POWER_SOURCE_MAINS); 
      zbPresence.onIdentify(ha_identify);
      //
@@ -631,13 +635,15 @@ void loop(void)
              uint16_t distance = radar.distanceToTarget;
              static uint16_t u = 0, d = 0;
              if (detected) {
-                 p += 1;
+                 d += 1;
                  if (debug_g) { DPRINTF("radar target detected at: %ucm, d=%u, u=%u, w=%u)\n", distance, d, u); }
                  status_color = RGB_LED_WHITE;
+                 ha_Presence = (distance < ha_Range) ? 1 : 0;    // we use 1 and 0 so that a third value can mean not set
              } else {
                  u += 1;
                  if (debug_g) { DPRINTF("radar target NONE\n"); }
                  status_color = RGB_LED_OFF;
+                 ha_Presence = 0;
              }
          } 
          //
@@ -647,6 +653,17 @@ void loop(void)
      } else {
          if (debug_g) { DPRINTF("radar DOWN!!\n"); }
          status_color = RGB_LED_RED;
+         ha_Presence = 0;
+     }
+
+     //
+     // Update zibgee if sensor changes from last state but must also throttle it somewhat.
+     //
+     static uint16_t last_ha_Presence = 0xFF;
+     if (ha_Presence != last_ha_Presence) {
+         last_ha_Presence = ha_Presence;
+         zbPresence.setBinaryInput(ha_Presence == 0 ? false : true);       
+         zbPresence.reportBinaryInput();
      }
 
      //
@@ -665,10 +682,11 @@ void loop(void)
      // Led is on for 4.5 seconds, then briefly on, repeat. Color depends on
      // what happend above. White (night light) is the default).
      //
+     static uint16_t ix = 0;
      rgb_led_set(ix > 1 ? status_color : RGB_LED_OFF);
      ix = (ix + 1) % 10;
      //
      // No need to buzz this loop, little pause is fine.
      //
-     delay(1000);
+     delay(500);
 }
