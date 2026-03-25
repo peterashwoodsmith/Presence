@@ -96,7 +96,7 @@ static const char *TAG = "zPres";
 // in the Arduino menu for use with the debug enabled library and debug levels in that core. We can also compile in/out 
 // the watch dog timers. 
 //
-const bool debug_g = false;
+const bool debug_g = true;
 const bool wdt_g   = true;
 
 // 
@@ -219,7 +219,8 @@ void isr_resetButtonPress()
 }
 
 //
-// We use the color RGB LED to indicate state.
+// Control of the color LED for various purposes. We can set a few different colors by RGB and also
+// can vary the brightness.
 //
 const uint8_t RGB_LED_OFF    = 0;        // Enums are causing compiler problems when passed as first argument.
 const uint8_t RGB_LED_WHITE  = 1;        // so back to old school.
@@ -227,17 +228,19 @@ const uint8_t RGB_LED_RED    = 2;
 const uint8_t RGB_LED_GREEN  = 3;
 const uint8_t RGB_LED_BLUE   = 4;
 const uint8_t RGB_LED_ORANGE = 5;
-const uint8_t RGB_MAX        = RGB_BRIGHTNESS;      // Fairly dim or they keep people awake
+const uint8_t rbg_max        = RGB_BRIGHTNESS;        // Fairly dim or they keep people awake
 const uint8_t RGB_MIN        = 0;
 #define       RGB_ORDER        LED_COLOR_ORDER_RGB    // Compiler problems passing enums, have to be explicit
 //
-void rgb_led_set(int color) {
-     switch(color) {                                  //RED     GREEN     BLUE
-         case RGB_LED_GREEN : rgbLedWriteOrdered(RGB_BUILTIN, RGB_ORDER, RGB_MIN, RGB_MAX,  RGB_MIN); break;
-         case RGB_LED_WHITE : rgbLedWriteOrdered(RGB_BUILTIN, RGB_ORDER, RGB_MAX, RGB_MAX,  RGB_MAX); break;
-         case RGB_LED_RED   : rgbLedWriteOrdered(RGB_BUILTIN, RGB_ORDER, RGB_MAX, RGB_MIN,  RGB_MIN); break;          
-         case RGB_LED_BLUE  : rgbLedWriteOrdered(RGB_BUILTIN, RGB_ORDER, RGB_MIN, RGB_MIN,  RGB_MAX); break;
-         case RGB_LED_ORANGE: rgbLedWriteOrdered(RGB_BUILTIN, RGB_ORDER, RGB_MAX, RGB_MAX/2,RGB_MIN); break;
+void rgb_led_set(uint32_t color, uint32_t brightness = 10) {
+     if (brightness > 10) brightness = 10;
+     int rbg_max = (RGB_BRIGHTNESS * brightness) / 10;
+     switch(color) {                                                      //RED     GREEN     BLUE
+         case RGB_LED_GREEN : rgbLedWriteOrdered(RGB_BUILTIN, RGB_ORDER, RGB_MIN, rbg_max,  RGB_MIN); break;
+         case RGB_LED_WHITE : rgbLedWriteOrdered(RGB_BUILTIN, RGB_ORDER, rbg_max, rbg_max,  rbg_max); break;
+         case RGB_LED_RED   : rgbLedWriteOrdered(RGB_BUILTIN, RGB_ORDER, rbg_max, RGB_MIN,  RGB_MIN); break;          
+         case RGB_LED_BLUE  : rgbLedWriteOrdered(RGB_BUILTIN, RGB_ORDER, RGB_MIN, RGB_MIN,  rbg_max); break;
+         case RGB_LED_ORANGE: rgbLedWriteOrdered(RGB_BUILTIN, RGB_ORDER, rbg_max, rbg_max/2,RGB_MIN); break;
          case RGB_LED_OFF   : rgbLedWriteOrdered(RGB_BUILTIN, RGB_ORDER, RGB_MIN, RGB_MIN,  RGB_MIN); break;
      }
 }
@@ -357,7 +360,7 @@ void ha_sync_status()
      zbFrequency.setAnalogOutput(ha_Frequency);
      zbFrequency.reportAnalogOutput();
      // Sync the presence cluster
-     zbPresence.setBinaryInput(ha_Presence);
+     zbPresence.setBinaryInput(ha_Presence == 1);  // careful because 0xff means unset
      zbPresence.reportBinaryInput();
      // Sync the debug clusters
      zbRebootReason.setAnalogInput(ha_nvs_last_reboot_reason);
@@ -622,48 +625,67 @@ void setup(void)
 //
 void loop(void)
 { 
+     //
+     // Any Zigbee problems we reset.
+     //
      if (!Zigbee.connected()) {
          if (debug_g) DPRINTF("zigbee disconnected while in loop()- restarting\n");
          ha_restart(5, millis()/1000);   
      }
-     //
-     int status_color = RGB_LED_OFF;         // Will set this depending on what happens below.
-     //
-     if (radar.isActive()) {
-         if (radar.read()) {
-             bool detected = radar.isTargetDetected;
-             uint16_t distance = radar.distanceToTarget;
-             static uint16_t u = 0, d = 0;
-             if (detected) {
-                 d += 1;
-                 if (debug_g) { DPRINTF("radar target detected at: %ucm, d=%u, u=%u, w=%u)\n", distance, d, u); }
-                 status_color = RGB_LED_WHITE;
-                 ha_Presence = (distance < ha_Range) ? 1 : 0;    // we use 1 and 0 so that a third value can mean not set
-             } else {
-                 u += 1;
-                 if (debug_g) { DPRINTF("radar target NONE\n"); }
-                 status_color = RGB_LED_OFF;
-                 ha_Presence = 0;
-             }
-         } 
-         //
-         // And feed the watch dog because radar and zibgee are both ok
-         // 
-         if (wdt_g) esp_task_wdt_reset();  
-     } else {
-         if (debug_g) { DPRINTF("radar DOWN!!\n"); }
-         status_color = RGB_LED_RED;
-         ha_Presence = 0;
-     }
 
      //
-     // Update zibgee if sensor changes from last state but must also throttle it somewhat.
+     // Any Radar Serial problems we will reset.
+     //
+     // T.B.D
+
+     //
+     // Initial conditions we don't know what color to set of if any presene has been
+     // detected.
+     //
+     int status_color = RGB_LED_OFF;         
+     ha_Presence = 0;
+     //
+     // Absorb all radar data and its only the last packet that matters. I think we can
+     // get a bit behind sometimes especially after boot up so we need to grab everything 
+     // the radar may have buffered up to us. Basically if we get on the last packet a 
+     // detection at a distance in cemtimeters which is less than the zibgee chosen 
+     // range in meters (so we have to multiply by 100) then we declare presence which will
+     // be signalled back to Zigbee below and chose the white color for the night light.
+     //
+     for(int l = 0; radar.read(); l++) {               
+         if (radar.isTargetDetected) {
+             uint16_t distance = radar.distanceToTarget;
+             if (debug_g) { DPRINTF("radar i/%d at: %ucm, range=%u\n", l, distance, ha_Range); }
+             if (distance < ha_Range * 100) {
+                 ha_Presence = 1;                                         // radar detected and in range
+                 status_color = RGB_LED_WHITE;
+             } else {                                                     // radar detected but too far
+                 ha_Presence = 0;
+                 status_color = RGB_LED_OFF;
+             }
+         } else {                                                         // nothing on radar
+             if (debug_g) { DPRINTF("radar i/%d target NONE\n", l); }
+             status_color = RGB_LED_OFF;
+             ha_Presence = 0;
+         }
+     } 
+     //
+     // And feed the watch dog because radar and zibgee are both ok and above
+     // loop was not infinite.
+     // 
+     if (wdt_g) esp_task_wdt_reset();  
+     
+     //
+     // Update zibgee if sensor changes from last state but 
+     // may need to throttle a bit to avoid too many updates to Zibgee. 
+     // the ha_Frequency should be used to throttle.. TBD.
      //
      static uint16_t last_ha_Presence = 0xFF;
      if (ha_Presence != last_ha_Presence) {
          last_ha_Presence = ha_Presence;
          zbPresence.setBinaryInput(ha_Presence == 0 ? false : true);       
          zbPresence.reportBinaryInput();
+         if (debug_g) { DPRINTF("ha report sensor Presence=%d\n", ha_Presence); }
      }
 
      //
@@ -680,11 +702,11 @@ void loop(void)
      }
      //
      // Led is on for 4.5 seconds, then briefly on, repeat. Color depends on
-     // what happend above. White (night light) is the default).
+     // what happend above. White (night light) is the default). Note that the
+     // brightness comes from Zigbee and is set by callbacks.
      //
-     static uint16_t ix = 0;
-     rgb_led_set(ix > 1 ? status_color : RGB_LED_OFF);
-     ix = (ix + 1) % 10;
+     rgb_led_set(status_color, ha_Brightness);
+    
      //
      // No need to buzz this loop, little pause is fine.
      //
