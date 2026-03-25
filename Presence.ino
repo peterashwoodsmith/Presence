@@ -331,6 +331,11 @@ uint16_t      ha_Brightness = 5;    //                              ..... to con
 uint16_t      ha_Frequency  = 0;    //                              ..... to control max frequency of updates to Zibgee 0..10 min
 
 //
+// For detecting dead radar.
+//
+uint32_t      radar_last_reads = 0; // When was radar last read (in seconds since startup)
+
+//
 // These are just useful debugging functions to display the attributes that HA has given us.
 // One for each attributes.
 // 
@@ -616,6 +621,11 @@ void setup(void)
      // Update the debug related information to HA.
      //
      ha_sync_status();
+
+     //
+     // Radar is working so report last read time for continuous failure checking in loop().
+     //
+     radar_last_reads = millis()/1000;
 }
 
 //
@@ -634,9 +644,15 @@ void loop(void)
      }
 
      //
-     // Any Radar Serial problems we will reset.
+     // Any Radar Serial problems we will reset. Just check to see if its been more than 10 seconds since
+     // we saw any radar data, if so a full reboot will occur and we remember the reason and time.
      //
-     // T.B.D
+     uint32_t nows = millis()/1000;                   // Current time in seconds since reboot
+     uint32_t delta = nows - radar_last_reads;        // time since last success full radar read
+     if (delta > 10) {                           
+         if (debug_g) DPRINTF("All radar's are disconnected while in loop()- restarting\n");
+         ha_restart(6, nows);   
+     }
 
      //
      // Initial conditions we don't know what color to set of if any presene has been
@@ -654,6 +670,7 @@ void loop(void)
      //
      for(int l = 0; radar.read(); l++) {               
          if (radar.isTargetDetected) {
+             radar_last_reads = millis()/1000;
              uint16_t distance = radar.distanceToTarget;
              if (debug_g) { DPRINTF("radar i/%d at: %ucm, range=%u\n", l, distance, ha_Range); }
              if (distance < ha_Range * 100) {
