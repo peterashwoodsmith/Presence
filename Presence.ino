@@ -482,8 +482,8 @@ void setup(void)
      //
      ha_Presence   = 0xFF;// This is a sensor "INPUT" from this device to Zibgee 0 false, 1 true, FF unset
      ha_Range      = 5;   // This is an output from Zibgee to this device to control range in meters 0..10
-     ha_Brightness = 5;   //                              ..... to control brighness of night LED 0..10
-     ha_Frequency  = 0;   //                              ..... to control max frequency of updates to Zibgee 0..10 min
+     ha_Brightness = 5;   //      ..... to control brighness of night LED 0..10
+     ha_Frequency  = 2;   //      ..... to control max frequency of updates to Zibgee 0s, 1=10s, 2=20s,.. 10=100s.
      //
      // Add the zibgee clusters (buttons/sliders etc.)
      //
@@ -512,7 +512,7 @@ void setup(void)
      zbFrequency.setManufacturerAndModel(MFGR,MODL);
      zbFrequency.addAnalogOutput();
      zbFrequency.setAnalogOutputApplication(ESP_ZB_ZCL_AO_COUNT_UNITLESS_COUNT);
-     zbFrequency.setAnalogOutputDescription("Frequency");
+     zbFrequency.setAnalogOutputDescription("Freqx10s");
      zbFrequency.setAnalogOutputResolution(1);
      zbFrequency.setAnalogOutputMinMax(0, 10);  
      zbFrequency.onAnalogOutputChange(ha_setFrequency);
@@ -704,14 +704,14 @@ void loop(void)
      if (ha_Presence != last_ha_Presence) {
          uint32_t nows = millis()/1000;
          uint32_t deltas = (ha_Presence == 0) ? nows - zigbee_last_notification : 0;
-         if ((deltas > 20)||(deltas == 0)) {
+         if ((deltas > ha_Frequency*10)||(deltas == 0)) {
              zbPresence.setBinaryInput(ha_Presence == 0 ? false : true);       
              zbPresence.reportBinaryInput();
              zigbee_last_notification = nows;
              last_ha_Presence = ha_Presence;
              if (debug_g) { DPRINTF("ha report sensor Presence=%d\n", ha_Presence); }
          } else {
-             if (debug_g) { DPRINTF("ha report sensor Presence=0 SUPPRESSED %us\n", deltas); }
+             if (debug_g) { DPRINTF("ha report sensor Presence=0 SUPPRESSED %us WAIT=%us\n", deltas, ha_Frequency*10); }
          }
      }
 
