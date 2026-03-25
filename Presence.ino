@@ -695,14 +695,24 @@ void loop(void)
      //
      // Update zibgee if sensor changes from last state but 
      // may need to throttle a bit to avoid too many updates to Zibgee. 
-     // the ha_Frequency should be used to throttle.. TBD.
+     // We track last time we send a notification to zibgee about presence gone and
+     // will suppress it for the required number of seconds to meet the desired
+     // maximum frequency as set in the ha_Frequency cluster.
      //
      static uint16_t last_ha_Presence = 0xFF;
+     static uint32_t zigbee_last_notification = 0; 
      if (ha_Presence != last_ha_Presence) {
-         last_ha_Presence = ha_Presence;
-         zbPresence.setBinaryInput(ha_Presence == 0 ? false : true);       
-         zbPresence.reportBinaryInput();
-         if (debug_g) { DPRINTF("ha report sensor Presence=%d\n", ha_Presence); }
+         uint32_t nows = millis()/1000;
+         uint32_t deltas = (ha_Presence == 0) ? nows - zigbee_last_notification : 0;
+         if ((deltas > 20)||(deltas == 0)) {
+             zbPresence.setBinaryInput(ha_Presence == 0 ? false : true);       
+             zbPresence.reportBinaryInput();
+             zigbee_last_notification = nows;
+             last_ha_Presence = ha_Presence;
+             if (debug_g) { DPRINTF("ha report sensor Presence=%d\n", ha_Presence); }
+         } else {
+             if (debug_g) { DPRINTF("ha report sensor Presence=0 SUPPRESSED %us\n", deltas); }
+         }
      }
 
      //
