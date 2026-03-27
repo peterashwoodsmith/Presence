@@ -79,6 +79,11 @@ s3km1110 radar1;
 s3km1110 radar2;
 
 //
+// Decide which or both radars to use.
+//
+const bool ENABLE_RADAR1 = true;
+const bool ENABLE_RADAR2 = true;
+//
 // Hardware Pin configurations.
 //
 const int isr_resetButtonPin = 18;                      // Causes a factory reset by erasing all NVS
@@ -437,84 +442,75 @@ void setup(void)
      }
     
      //
-     // Configure the serial port used by the radar1. We use two so left and
-     // right radars. Radar1 on Serial1 and Radar2 on Serial2.
+     // Configure the serial port used by the each radar and bring them
+     // up if they are configured.
      //
-     Serial2.begin(115200, SERIAL_8N1,  4,   5);
-     Serial1.begin(115200, SERIAL_8N1,  11,  10);
-  
-     // Try three times to see if we can get the radar1 up.
-     // If not reboot
-     bool isRadar1Enabled = false;
-     for(int i=0; i<3; i++) {
-         if(radar1.begin(&Serial1, debug_g ? &Serial : NULL)) {
-            rgb_led_flash(RGB_LED_GREEN, RGB_LED_OFF);
-            isRadar1Enabled = true;
-            break;
+     if (ENABLE_RADAR1) {
+         Serial1.begin(115200, SERIAL_8N1,  11,  10);
+         bool isRadar1Enabled = false;
+         for(int i=0; i<3; i++) {
+             if(radar1.begin(&Serial1, debug_g ? &Serial : NULL)) {
+                rgb_led_flash(RGB_LED_GREEN, RGB_LED_OFF);
+                isRadar1Enabled = true;
+                break;
+             }
+             if (debug_g) { DPRINTF("Retrying radar1 connection...\n"); };
+             delay(1000);
          }
-         if (debug_g) { DPRINTF("Retrying radar1 connection...\n"); };
-         delay(1000);
+         if (isRadar1Enabled) {
+             if (radar1.readFirmwareVersion()) {
+                 if (debug_g) { DPRINTF("Radar1 Firmware: %s\n", radar1.firmwareVersion); }
+             }
+             if (radar1.readSerialNumber()) {
+                if (debug_g) { DPRINTF("[Radar1 Serial number: %s\n", radar1.serialNumber); }
+             }
+             auto config = radar1.radarConfiguration;
+             if (debug_g) {
+                 DPRINTF("[Info] Radar1 config:\n");
+                 DPRINTF("|- Gates min: %u\n", config.detectionGatesMin);
+                 DPRINTF("|- Gates max %u\n", config.detectionGatesMax);
+                 DPRINTF("|- Disappearance delay: %u sec\n", config.targetDisappearanceDelay);
+             }
+             rgb_led_flash(RGB_LED_GREEN, RGB_LED_OFF);
+         } else {
+             delay(5000);
+             rgb_led_flash(RGB_LED_RED, RGB_LED_RED);
+             ha_restart(2, millis()/1000); 
+         }
      }
-
-     /// Try three times to see if we can get the radar2 up.
-     // If not reboot
-     bool isRadar2Enabled = false;
-     for(int i=0; i<3; i++) {
-         if(radar2.begin(&Serial2, debug_g ? &Serial : NULL)) {
-            rgb_led_flash(RGB_LED_GREEN, RGB_LED_OFF);
-            isRadar2Enabled = true;
-            break;
+   
+     if (ENABLE_RADAR2) {
+         Serial2.begin(115200, SERIAL_8N1,  4,   5);
+         bool isRadar2Enabled = false;
+         for(int i=0; i<3; i++) {
+             if(radar2.begin(&Serial2, debug_g ? &Serial : NULL)) {
+                rgb_led_flash(RGB_LED_GREEN, RGB_LED_OFF);
+                isRadar2Enabled = true;
+                break;
+             }
+             if (debug_g) { DPRINTF("Retrying radar2 connection...\n"); };
+             delay(1000);
          }
-         if (debug_g) { DPRINTF("Retrying radar2 connection...\n"); };
-         delay(1000);
-     }
-
-     //
-     // Get config if its up, otherwise we reset to try again.
-     //
-     if (isRadar1Enabled) {
-         if (radar1.readFirmwareVersion()) {
-             if (debug_g) { DPRINTF("Radar1 Firmware: %s\n", radar1.firmwareVersion); }
+         if (isRadar2Enabled) {
+             if (radar2.readFirmwareVersion()) {
+                 if (debug_g) { DPRINTF("Radar2 Firmware: %s\n", radar2.firmwareVersion); }
+             }
+             if (radar2.readSerialNumber()) {
+                if (debug_g) { DPRINTF("[Radar2 Serial number: %s\n", radar2.serialNumber); }
+             }
+             auto config = radar2.radarConfiguration;
+             if (debug_g) {
+                 DPRINTF("[Info] Radar2 config:\n");
+                 DPRINTF("|- Gates min: %u\n", config.detectionGatesMin);
+                 DPRINTF("|- Gates max %u\n", config.detectionGatesMax);
+                 DPRINTF("|- Disappearance delay: %u sec\n", config.targetDisappearanceDelay);
+             }
+             rgb_led_flash(RGB_LED_GREEN, RGB_LED_OFF);
+         } else {
+             delay(5000);
+             rgb_led_flash(RGB_LED_RED, RGB_LED_RED);
+             ha_restart(3, millis()/1000); 
          }
-         if (radar1.readSerialNumber()) {
-            if (debug_g) { DPRINTF("[Radar1 Serial number: %s\n", radar1.serialNumber); }
-         }
-         auto config = radar1.radarConfiguration;
-         if (debug_g) {
-             DPRINTF("[Info] Radar1 config:\n");
-             DPRINTF("|- Gates min: %u\n", config.detectionGatesMin);
-             DPRINTF("|- Gates max %u\n", config.detectionGatesMax);
-             DPRINTF("|- Disappearance delay: %u sec\n", config.targetDisappearanceDelay);
-         }
-         rgb_led_flash(RGB_LED_GREEN, RGB_LED_OFF);
-     } else {
-         delay(5000);
-         rgb_led_flash(RGB_LED_RED, RGB_LED_RED);
-         ha_restart(2, millis()/1000); 
-     }
-
-     //
-     // Get config if its up, otherwise we reset to try again.
-     //
-     if (isRadar2Enabled) {
-         if (radar2.readFirmwareVersion()) {
-             if (debug_g) { DPRINTF("Radar2 Firmware: %s\n", radar2.firmwareVersion); }
-         }
-         if (radar2.readSerialNumber()) {
-            if (debug_g) { DPRINTF("[Radar2 Serial number: %s\n", radar2.serialNumber); }
-         }
-         auto config = radar2.radarConfiguration;
-         if (debug_g) {
-             DPRINTF("[Info] Radar2 config:\n");
-             DPRINTF("|- Gates min: %u\n", config.detectionGatesMin);
-             DPRINTF("|- Gates max %u\n", config.detectionGatesMax);
-             DPRINTF("|- Disappearance delay: %u sec\n", config.targetDisappearanceDelay);
-         }
-         rgb_led_flash(RGB_LED_GREEN, RGB_LED_OFF);
-     } else {
-         delay(5000);
-         rgb_led_flash(RGB_LED_RED, RGB_LED_RED);
-         ha_restart(3, millis()/1000); 
      }
 
      //
@@ -692,19 +688,20 @@ void loop(void)
      //
      // Any Radar Serial problems we will reset. Just check to see if its been more than 10 seconds since
      // we saw any radar data, if so a full reboot will occur and we remember the reason and time.
+     // Actually we continue to operate even if one of the sensors is dead.
      //
      uint32_t nows = millis()/1000;                     // Current time in seconds since reboot
      uint32_t delta1 = nows - radar1_last_reads;        // time since last success full radar read
      uint32_t delta2 = nows - radar2_last_reads;        // time since last success full radar read
      //
-     if (delta1 > 10) {                           
+     if ((delta1 > 60)&&(delta2 > 60)) {                           
          if (debug_g) DPRINTF("A radar 1 disconnected while in loop()- restarting\n");
          ha_restart(7, nows);   
      }
-     if (delta2 > 10) {                           
-         if (debug_g) DPRINTF("A radar 2 disconnected while in loop()- restarting\n");
-         ha_restart(8, nows);   
-     }
+     //if (delta2 > 60) {                           
+     //    if (debug_g) DPRINTF("A radar 2 disconnected while in loop()- restarting\n");
+     //    ha_restart(8, nows);   
+     //}
 
      //
      // Initial conditions we don't know what color to set of if any presene has been

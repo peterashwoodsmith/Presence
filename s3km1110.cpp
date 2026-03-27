@@ -3,7 +3,7 @@
 
 #include "s3km1110.h"
 
-s3km1110::s3km1110() {};
+s3km1110::s3km1110() { _uartRadar = _uartDebug = NULL; };
 s3km1110::~s3km1110() = default;
 
 #pragma mark - Public
@@ -36,7 +36,9 @@ bool s3km1110::isActive()
 
 bool s3km1110::read()
 {
-    return _read_frame();
+    if (_uartRadar != NULL)
+         return _read_frame();
+    return(false);
 }
 
 #pragma mark - Send command
