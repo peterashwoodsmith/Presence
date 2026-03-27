@@ -81,8 +81,8 @@ s3km1110 radar2;
 //
 // Decide which or both radars to use.
 //
-const bool ENABLE_RADAR1 = true;
-const bool ENABLE_RADAR2 = true;
+const bool RADAR1_ENABLED = true;
+const bool RADAR2_ENABLED = true;
 //
 // Hardware Pin configurations.
 //
@@ -445,7 +445,7 @@ void setup(void)
      // Configure the serial port used by the each radar and bring them
      // up if they are configured.
      //
-     if (ENABLE_RADAR1) {
+     if (RADAR1_ENABLED) {
          Serial1.begin(115200, SERIAL_8N1,  11,  10);
          bool isRadar1Enabled = false;
          for(int i=0; i<3; i++) {
@@ -479,7 +479,7 @@ void setup(void)
          }
      }
    
-     if (ENABLE_RADAR2) {
+     if (RADAR2_ENABLED) {
          Serial2.begin(115200, SERIAL_8N1,  4,   5);
          bool isRadar2Enabled = false;
          for(int i=0; i<3; i++) {
@@ -668,15 +668,24 @@ void setup(void)
      // Radar is working so report last read time for continuous failure checking in loop().
      //
      radar1_last_reads = millis()/1000;
+     radar2_last_reads = radar1_last_reads;
 }
 
 //
 // Master loop - look for changes in radar or zibgee status. If something moves into detection range notify zigbee
 // but not too frequently. If radar goes down we won't refresh watch dog, so it will reset eventually. If zibgee goes 
-// disconnected we restart immediately.
+// disconnected we restart immediately. 
 //
 void loop(void)
 { 
+     //
+     // We will swap the radars to avoid interference between them. We operate for 500ms on one antena, then 
+     // put it in command mode (which stops it transmitting). Then we put take the second antenna out of 
+     // command mode which start it functioning again. This is repeated continuously. While we can operate with 
+     // both radars at the same time, we seem to get a lot of spurious results.
+     //
+     delay(500);    // HERE WE SHOULD BE SWAPPING THE RADARS!!
+
      //
      // Any Zigbee problems we reset.
      //
@@ -694,21 +703,19 @@ void loop(void)
      uint32_t delta1 = nows - radar1_last_reads;        // time since last success full radar read
      uint32_t delta2 = nows - radar2_last_reads;        // time since last success full radar read
      //
-     if ((delta1 > 60)&&(delta2 > 60)) {                           
+     if (RADAR1_ENABLED && (delta1 > 60)) {                           
          if (debug_g) DPRINTF("A radar 1 disconnected while in loop()- restarting\n");
          ha_restart(7, nows);   
      }
-     //if (delta2 > 60) {                           
-     //    if (debug_g) DPRINTF("A radar 2 disconnected while in loop()- restarting\n");
-     //    ha_restart(8, nows);   
-     //}
-
+     if (RADAR2_ENABLED && (delta2 > 60)) {                           
+         if (debug_g) DPRINTF("A radar 2 disconnected while in loop()- restarting\n");
+         ha_restart(8, nows);   
+     }
      //
      // Initial conditions we don't know what color to set of if any presene has been
      // detected.
      //
      static int status_color = RGB_LED_OFF;     
-
      //
      // Read as much data as we can from both radars, but guard against spending too much time here.
      // If we get too much data then we have a problem and will reboot. We stop when both radars have
@@ -717,8 +724,8 @@ void loop(void)
      int r1_count = 0;                                   // How many packets we got from radar1
      int r2_count = 0;                                   // How many packets we got from radar2
      while(true) {                                       // yes , we break out in the middle
-           bool r1_read = radar1.read();                 // see if radar1 has a packet
-           bool r2_read = radar2.read();                 // see if radar2 has a packet
+           bool r1_read = RADAR1_ENABLED? radar1.read() : false;  // see if radar1 has a packet
+           bool r2_read = RADAR2_ENABLED? radar2.read() : false;  // see if radar2 has a packet
            if (r1_read) r1_count += 1;                   // accumulate tally for radar1
            if (r2_read) r2_count += 1;                   // tally for radar2
            if ((!r1_read) && (!r2_read)) break;          // if nothing new get out and process
@@ -727,7 +734,6 @@ void loop(void)
                ha_restart(9, millis()/1000);   
            }
      } 
-     
      //
      // Look at the last radar packets we got and use them to decide if either radar has a target
      // within the desire range.
@@ -750,7 +756,6 @@ void loop(void)
              radar2_presence = (distance < ha_Range*100) ? 1 : 0;
          }
      } 
-    
      //
      // If either detector has presence then we consider this presence for zigbee.
      // If both detectors have no presence then this is no presence for zigbee.
@@ -760,13 +765,11 @@ void loop(void)
          ha_Presence = 1;
      if ((radar1_presence == 0) && (radar2_presence == 0))
          ha_Presence = 0;
-
      //
      // And feed the watch dog because radar and zibgee are both ok and above
      // loop was not infinite.
      // 
      if (wdt_g) esp_task_wdt_reset();  
-     
      //
      // Update zibgee if sensor changes from last state but 
      // may need to throttle a bit to avoid too many updates to Zibgee. 
@@ -790,7 +793,6 @@ void loop(void)
              if (debug_g) { DPRINTF("ha report sensor Presence=0 SUPPRESSED %us WAIT=%us\n", deltas, ha_Frequency*10); }
          }
      }
-
      //
      // Every so often (5 mins) we update the HA with all all attributes.
      //
@@ -809,9 +811,4 @@ void loop(void)
      // brightness comes from Zigbee and is set by callbacks.
      //
      rgb_led_set(status_color, ha_Brightness);
-    
-     //
-     // No need to buzz this loop, little pause is fine.
-     //
-     delay(500);
 }
