@@ -710,47 +710,50 @@ void loop(void)
      // Initial conditions we don't know what color to set of if any presene has been
      // detected.
      //
-     static int status_color = RGB_LED_OFF;         
+     static int status_color = RGB_LED_OFF;     
+
+     //
+     // Read as much data as we can from both radars, but guard against spending too much time here.
+     // If we get too much data then we have a problem and will reboot. We stop when both radars have
+     // fed us everything they know. 
+     //
+     int r1_count = 0;                                   // How many packets we got from radar1
+     int r2_count = 0;                                   // How many packets we got from radar2
+     while(true) {                                       // yes , we break out in the middle
+           bool r1_read = radar1.read();                 // see if radar1 has a packet
+           bool r2_read = radar2.read();                 // see if radar2 has a packet
+           if (r1_read) r1_count += 1;                   // accumulate tally for radar1
+           if (r2_read) r2_count += 1;                   // tally for radar2
+           if ((!r1_read) && (!r2_read)) break;          // if nothing new get out and process
+           if ((r1_count > 100) || (r2_count > 100)) {   // guard against infinite loop, reboot if so
+               if (debug_g) DPRINTF("abnormal amount of radar data - can't keep up\n");
+               ha_restart(9, millis()/1000);   
+           }
+     } 
      
      //
-     // Absorb all radar data and its only the last packet that matters. I think we can
-     // get a bit behind sometimes especially after boot up so we need to grab everything 
-     // the radar may have buffered up to us. Basically if we get on the last packet a 
-     // detection at a distance in cemtimeters which is less than the zibgee chosen 
-     // range in meters (so we have to multiply by 100) then we declare presence which will
-     // be signalled back to Zigbee below and chose the white color for the night light.
+     // Look at the last radar packets we got and use them to decide if either radar has a target
+     // within the desire range.
      //
-     for(int l = 0; radar1.read(); l++) {               
+     if (r1_count > 0) { 
+         radar1_last_reads = millis()/1000;
+         radar1_presence = 0;
          if (radar1.isTargetDetected) {
-             radar1_last_reads = millis()/1000;
              uint16_t distance = radar1.distanceToTarget;
-             if (debug_g) { DPRINTF("radar 1 i/%d at: %ucm, range=%u\n", l, distance, ha_Range); }
-             if (distance < ha_Range * 100) {
-                 radar1_presence = 1;                                         // radar detected and in range
-             } else {                                                     // radar detected but too far
-                 radar1_presence = 0;
-             }
-         } else {                                                         // nothing on radar
-             if (debug_g) { DPRINTF("radar 1 i/%d target NONE\n", l); }
-             radar1_presence = 0;
+             if (debug_g) { DPRINTF("radar 1 at: %ucm, range=%u\n", distance, ha_Range); }
+             radar1_presence = (distance < ha_Range*100) ? 1 : 0;
          }
      } 
-     //
-     for(int l = 0; radar2.read(); l++) {               
+     if (r2_count > 0) { 
+         radar2_last_reads = millis()/1000;
+         radar2_presence = 0;
          if (radar2.isTargetDetected) {
-             radar2_last_reads = millis()/1000;
              uint16_t distance = radar2.distanceToTarget;
-             if (debug_g) { DPRINTF("radar 2 i/%d at: %ucm, range=%u\n", l, distance, ha_Range); }
-             if (distance < ha_Range * 100) {
-                 radar2_presence = 1;                                         // radar detected and in range
-             } else {                                                     // radar detected but too far
-                 radar2_presence = 0;
-             }
-         } else {                                                         // nothing on radar
-             if (debug_g) { DPRINTF("radar 2 i/%d target NONE\n", l); }
-             radar2_presence = 0;
+             if (debug_g) { DPRINTF("radar 2 at: %ucm, range=%u\n", distance, ha_Range); }
+             radar2_presence = (distance < ha_Range*100) ? 1 : 0;
          }
      } 
+    
      //
      // If either detector has presence then we consider this presence for zigbee.
      // If both detectors have no presence then this is no presence for zigbee.
