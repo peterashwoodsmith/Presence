@@ -8,15 +8,14 @@ s3km1110::~s3km1110() = default;
 
 #pragma mark - Public
 
-bool s3km1110::begin(Stream &dataStream, Stream &debugStream)
+bool s3km1110::begin(Stream *dataStream, Stream *debugStream)
 {
-    // UARTs
-    _uartRadar = &dataStream;
-    _uartDebug = &debugStream;
-
-    if (!_uartRadar) {
+    if (dataStream == NULL) 
         return false;
-    }
+
+    // UARTs
+    _uartRadar = dataStream;
+    _uartDebug = debugStream;
 
     #if !defined(S3KM1110_SKIP_READ_CONFIG_ON_BEGIN)
     if (_enableReportMode()) {
@@ -114,9 +113,10 @@ bool s3km1110::readAllRadarConfigs()
 
 bool s3km1110::_read_frame()
 {
+    int nread = 0;
     while (_uartRadar->available()) {
         uint8_t _readData = _uartRadar->read();
-        
+        nread += 1;
         if (_isFrameStarted == false) {
             if (_readData == 0xF4) {
                 _radarDataFrame[_radarDataFramePosition++] = _readData;
@@ -161,7 +161,11 @@ bool s3km1110::_read_frame()
             }
         }
     }
-
+    #if defined(S3KM1110_DEBUG_COMMANDS) || defined(S3KM1110_DEBUG_DATA)
+        if ((_uartDebug != nullptr) && (nread > 0)) {
+            _uartDebug->printf("[ERROR] *** read frame failed but read %d bytes ***\n", nread);
+        }
+    #endif
     return false;
 }
 

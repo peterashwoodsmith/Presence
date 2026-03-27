@@ -4,8 +4,8 @@
 
 #include <Arduino.h>
 
-// #define S3KM1110_DEBUG_COMMANDS   1
-// #define S3KM1110_DEBUG_DATA        1
+#define S3KM1110_DEBUG_COMMANDS    1
+#define S3KM1110_DEBUG_DATA        1
 // #define S3KM1110_SKIP_READ_CONFIG_ON_BEGIN    1
 
 struct s3km1110ConfigParameters
@@ -24,7 +24,7 @@ class s3km1110 {
         static constexpr size_t kMaxFrameLength = 45;
         static constexpr size_t kDistanceGateCount = 16;
 
-        bool begin(Stream &dataStream, Stream &debugStream);
+        bool begin(Stream *dataStream, Stream *debugStream);
         bool isActive();    // Is the sensor sending data regularly
         bool read();        // You must call this frequently in your main loop to process incoming frames from the sensor
 
@@ -92,7 +92,7 @@ class s3km1110 {
         Stream *_uartRadar = nullptr;
         Stream *_uartDebug = nullptr;
 
-        const uint32_t kRadarUartcommandTimeout = 250;
+        const uint32_t kRadarUartcommandTimeout = 500;
         uint32_t _radarUartLastPacketTime = 0;
         uint32_t _radarUartLastCommandTime = 0;
 

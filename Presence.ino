@@ -72,9 +72,11 @@
 #include "esp_log.h"
 
 //
-// This is the object that interfaces with the radar via Serial1
+// This is the object that interfaces with the radar1 via Serial1 and
+// radar2 via Serial2.
 //
-s3km1110 radar;
+s3km1110 radar1;
+s3km1110 radar2;
 
 //
 // Hardware Pin configurations.
@@ -331,9 +333,10 @@ uint16_t      ha_Brightness = 5;    //                              ..... to con
 uint16_t      ha_Frequency  = 0;    //                              ..... to control max frequency of updates to Zibgee 0..10 min
 
 //
-// For detecting dead radar.
+// For detecting dead radar1.
 //
-uint32_t      radar_last_reads = 0; // When was radar last read (in seconds since startup)
+uint32_t      radar1_last_reads = 0; // When was radar last read (in seconds since startup)
+uint32_t      radar2_last_reads = 0; // and for 2nd radar.
 
 //
 // These are just useful debugging functions to display the attributes that HA has given us.
@@ -432,36 +435,51 @@ void setup(void)
      }
     
      //
-     // Configure the serial port used by the radar.
+     // Configure the serial port used by the radar1. We use two so left and
+     // right radars. Radar1 on Serial1 and Radar2 on Serial2.
      //
-     Serial1.begin(115200, SERIAL_8N1);
-
-     //
-     // Try three times to see if we can get the radar up.
-     // If not 
-     bool isRadarEnabled = false;
+     Serial2.begin(115200, SERIAL_8N1,  4,   5);
+     Serial1.begin(115200, SERIAL_8N1,  11,  10);
+  
+     // Try three times to see if we can get the radar1 up.
+     // If not reboot
+     bool isRadar1Enabled = false;
      for(int i=0; i<3; i++) {
-         if(radar.begin(Serial1, Serial)) {
+         if(radar1.begin(&Serial1, &Serial)) {
             rgb_led_flash(RGB_LED_GREEN, RGB_LED_OFF);
-            isRadarEnabled = true;
+            isRadar1Enabled = true;
             break;
          }
-         if (debug_g) { DPRINTF("Retrying radar connection...\n"); };
+         if (debug_g) { DPRINTF("Retrying radar1 connection...\n"); };
          delay(1000);
      }
+
+     /// Try three times to see if we can get the radar2 up.
+     // If not reboot
+     bool isRadar2Enabled = false;
+     for(int i=0; i<3; i++) {
+         if(radar2.begin(&Serial2, &Serial)) {
+            rgb_led_flash(RGB_LED_GREEN, RGB_LED_OFF);
+            isRadar1Enabled = true;
+            break;
+         }
+         if (debug_g) { DPRINTF("Retrying radar2 connection...\n"); };
+         delay(1000);
+     }
+
      //
      // Get config if its up, otherwise we reset to try again.
      //
-     if (isRadarEnabled) {
-         if (radar.readFirmwareVersion()) {
-             if (debug_g) { DPRINTF("Radar Firmware: %s\n", radar.firmwareVersion); }
+     if (isRadar1Enabled) {
+         if (radar1.readFirmwareVersion()) {
+             if (debug_g) { DPRINTF("Radar1 Firmware: %s\n", radar1.firmwareVersion); }
          }
-         if (radar.readSerialNumber()) {
-            if (debug_g) { DPRINTF("[Radar Serial number: %s\n", radar.serialNumber); }
+         if (radar1.readSerialNumber()) {
+            if (debug_g) { DPRINTF("[Radar1 Serial number: %s\n", radar1.serialNumber); }
          }
-         auto config = radar.radarConfiguration;
+         auto config = radar1.radarConfiguration;
          if (debug_g) {
-             DPRINTF("[Info] Radar config:\n");
+             DPRINTF("[Info] Radar1 config:\n");
              DPRINTF("|- Gates min: %u\n", config.detectionGatesMin);
              DPRINTF("|- Gates max %u\n", config.detectionGatesMax);
              DPRINTF("|- Disappearance delay: %u sec\n", config.targetDisappearanceDelay);
@@ -472,7 +490,31 @@ void setup(void)
          rgb_led_flash(RGB_LED_RED, RGB_LED_RED);
          ha_restart(2, millis()/1000); 
      }
-    
+
+     //
+     // Get config if its up, otherwise we reset to try again.
+     //
+     if (isRadar2Enabled) {
+         if (radar2.readFirmwareVersion()) {
+             if (debug_g) { DPRINTF("Radar2 Firmware: %s\n", radar2.firmwareVersion); }
+         }
+         if (radar2.readSerialNumber()) {
+            if (debug_g) { DPRINTF("[Radar2 Serial number: %s\n", radar2.serialNumber); }
+         }
+         auto config = radar2.radarConfiguration;
+         if (debug_g) {
+             DPRINTF("[Info] Radar2 config:\n");
+             DPRINTF("|- Gates min: %u\n", config.detectionGatesMin);
+             DPRINTF("|- Gates max %u\n", config.detectionGatesMax);
+             DPRINTF("|- Disappearance delay: %u sec\n", config.targetDisappearanceDelay);
+         }
+         rgb_led_flash(RGB_LED_GREEN, RGB_LED_OFF);
+     } else {
+         delay(5000);
+         rgb_led_flash(RGB_LED_RED, RGB_LED_RED);
+         ha_restart(2, millis()/1000); 
+     }
+
      //
      // We get debug information from last reboot (uptime and reboot reason etc.)
      ha_nvs_read();
@@ -625,7 +667,7 @@ void setup(void)
      //
      // Radar is working so report last read time for continuous failure checking in loop().
      //
-     radar_last_reads = millis()/1000;
+     radar1_last_reads = millis()/1000;
 }
 
 //
@@ -648,9 +690,11 @@ void loop(void)
      // we saw any radar data, if so a full reboot will occur and we remember the reason and time.
      //
      uint32_t nows = millis()/1000;                   // Current time in seconds since reboot
-     uint32_t delta = nows - radar_last_reads;        // time since last success full radar read
-     if (delta > 10) {                           
-         if (debug_g) DPRINTF("All radar's are disconnected while in loop()- restarting\n");
+     uint32_t delta1 = nows - radar1_last_reads;        // time since last success full radar read
+     uint32_t delta2 = nows - radar2_last_reads;        // time since last success full radar read
+
+     if ((delta1 > 10)||(delta2 > 10)) {                           
+         if (debug_g) DPRINTF("A radar disconnected while in loop()- restarting\n");
          ha_restart(6, nows);   
      }
 
@@ -668,10 +712,10 @@ void loop(void)
      // range in meters (so we have to multiply by 100) then we declare presence which will
      // be signalled back to Zigbee below and chose the white color for the night light.
      //
-     for(int l = 0; radar.read(); l++) {               
-         if (radar.isTargetDetected) {
-             radar_last_reads = millis()/1000;
-             uint16_t distance = radar.distanceToTarget;
+     for(int l = 0; radar1.read(); l++) {               
+         if (radar1.isTargetDetected) {
+             radar1_last_reads = millis()/1000;
+             uint16_t distance = radar1.distanceToTarget;
              if (debug_g) { DPRINTF("radar i/%d at: %ucm, range=%u\n", l, distance, ha_Range); }
              if (distance < ha_Range * 100) {
                  ha_Presence = 1;                                         // radar detected and in range
@@ -686,6 +730,8 @@ void loop(void)
              ha_Presence = 0;
          }
      } 
+
+    
      //
      // And feed the watch dog because radar and zibgee are both ok and above
      // loop was not infinite.
