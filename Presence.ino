@@ -105,7 +105,7 @@ const bool wdt_g   = true;
 // Non volatile storage for debugging. When we restart etc. we will write the reasons 
 // and track last uptime etc. for display via a Zigbee debug cluster sensor.
 //
-const char       *ha_nvs_name = "_MRVZPRES_";              // Unique name for our partition
+const char       *ha_nvs_name = "_ZPRES_";                 // Unique name for our partition
 const char       *ha_nvs_vname= "_vars_";                  // name for our packeed variables
 nvs_handle_t      ha_nvs_handle = 0;                       // Once open this is read/write to NVS
 uint32_t          ha_nvs_last_uptime = 0;                  // minutes we were up last time before reboot
@@ -335,8 +335,10 @@ uint16_t      ha_Frequency  = 0;    //                              ..... to con
 //
 // For detecting dead radar1.
 //
-uint32_t      radar1_last_reads = 0; // When was radar last read (in seconds since startup)
-uint32_t      radar2_last_reads = 0; // and for 2nd radar.
+uint32_t      radar1_last_reads = 0;    // When was radar last read (in seconds since startup)
+uint32_t      radar2_last_reads = 0;    // and for 2nd radar.
+uint16_t      radar1_presence   = 0xFF; // Unknown
+uint16_t      radar2_presence   = 0xFF; // Unknown
 
 //
 // These are just useful debugging functions to display the attributes that HA has given us.
@@ -445,7 +447,7 @@ void setup(void)
      // If not reboot
      bool isRadar1Enabled = false;
      for(int i=0; i<3; i++) {
-         if(radar1.begin(&Serial1, &Serial)) {
+         if(radar1.begin(&Serial1, debug_g ? &Serial : NULL)) {
             rgb_led_flash(RGB_LED_GREEN, RGB_LED_OFF);
             isRadar1Enabled = true;
             break;
@@ -458,9 +460,9 @@ void setup(void)
      // If not reboot
      bool isRadar2Enabled = false;
      for(int i=0; i<3; i++) {
-         if(radar2.begin(&Serial2, &Serial)) {
+         if(radar2.begin(&Serial2, debug_g ? &Serial : NULL)) {
             rgb_led_flash(RGB_LED_GREEN, RGB_LED_OFF);
-            isRadar1Enabled = true;
+            isRadar2Enabled = true;
             break;
          }
          if (debug_g) { DPRINTF("Retrying radar2 connection...\n"); };
@@ -512,7 +514,7 @@ void setup(void)
      } else {
          delay(5000);
          rgb_led_flash(RGB_LED_RED, RGB_LED_RED);
-         ha_restart(2, millis()/1000); 
+         ha_restart(3, millis()/1000); 
      }
 
      //
@@ -522,7 +524,9 @@ void setup(void)
      //
      // Initialize all the major variables that are sent to/from zigbee/HA
      //
-     ha_Presence   = 0xFF;// This is a sensor "INPUT" from this device to Zibgee 0 false, 1 true, FF unset
+     radar1_presence   = 0xFF;    // Unknown
+     radar2_presence   = 0xFF;    // Unknown
+     ha_Presence       = 0xFF;    //  This is a sensor "INPUT" from this device to Zibgee 0 false, 1 true, FF unset
      ha_Range      = 5;   // This is an output from Zibgee to this device to control range in meters 0..10
      ha_Brightness = 5;   //      ..... to control brighness of night LED 0..10
      ha_Frequency  = 2;   //      ..... to control max frequency of updates to Zibgee 0s, 1=10s, 2=20s,.. 10=100s.
@@ -636,7 +640,7 @@ void setup(void)
            rgb_led_flash(RGB_LED_RED, RGB_LED_WHITE);
            rgb_led_flash(RGB_LED_WHITE, RGB_LED_RED);
         }
-        ha_restart(3, millis()/1000);             // restart and remember why
+        ha_restart(4, millis()/1000);             // restart and remember why
      }
      //
      // Now connect to network.
@@ -654,7 +658,7 @@ void setup(void)
            }
            rgb_led_flash(RGB_LED_ORANGE, RGB_LED_ORANGE);  // We tried for 30 minutes, restart.
            rgb_led_flash(RGB_LED_RED, RGB_LED_RED);
-           ha_restart(4, millis()/1000);   
+           ha_restart(5, millis()/1000);   
         }
      }
      rgb_led_flash(RGB_LED_BLUE, RGB_LED_BLUE);   
@@ -682,28 +686,32 @@ void loop(void)
      //
      if (!Zigbee.connected()) {
          if (debug_g) DPRINTF("zigbee disconnected while in loop()- restarting\n");
-         ha_restart(5, millis()/1000);   
+         ha_restart(6, millis()/1000);   
      }
 
      //
      // Any Radar Serial problems we will reset. Just check to see if its been more than 10 seconds since
      // we saw any radar data, if so a full reboot will occur and we remember the reason and time.
      //
-     uint32_t nows = millis()/1000;                   // Current time in seconds since reboot
+     uint32_t nows = millis()/1000;                     // Current time in seconds since reboot
      uint32_t delta1 = nows - radar1_last_reads;        // time since last success full radar read
      uint32_t delta2 = nows - radar2_last_reads;        // time since last success full radar read
-
-     if ((delta1 > 10)||(delta2 > 10)) {                           
-         if (debug_g) DPRINTF("A radar disconnected while in loop()- restarting\n");
-         ha_restart(6, nows);   
+     //
+     if (delta1 > 10) {                           
+         if (debug_g) DPRINTF("A radar 1 disconnected while in loop()- restarting\n");
+         ha_restart(7, nows);   
+     }
+     if (delta2 > 10) {                           
+         if (debug_g) DPRINTF("A radar 2 disconnected while in loop()- restarting\n");
+         ha_restart(8, nows);   
      }
 
      //
      // Initial conditions we don't know what color to set of if any presene has been
      // detected.
      //
-     int status_color = RGB_LED_OFF;         
-     ha_Presence = 0;
+     static int status_color = RGB_LED_OFF;         
+     
      //
      // Absorb all radar data and its only the last packet that matters. I think we can
      // get a bit behind sometimes especially after boot up so we need to grab everything 
@@ -716,22 +724,43 @@ void loop(void)
          if (radar1.isTargetDetected) {
              radar1_last_reads = millis()/1000;
              uint16_t distance = radar1.distanceToTarget;
-             if (debug_g) { DPRINTF("radar i/%d at: %ucm, range=%u\n", l, distance, ha_Range); }
+             if (debug_g) { DPRINTF("radar 1 i/%d at: %ucm, range=%u\n", l, distance, ha_Range); }
              if (distance < ha_Range * 100) {
-                 ha_Presence = 1;                                         // radar detected and in range
-                 status_color = RGB_LED_WHITE;
+                 radar1_presence = 1;                                         // radar detected and in range
              } else {                                                     // radar detected but too far
-                 ha_Presence = 0;
-                 status_color = RGB_LED_OFF;
+                 radar1_presence = 0;
              }
          } else {                                                         // nothing on radar
-             if (debug_g) { DPRINTF("radar i/%d target NONE\n", l); }
-             status_color = RGB_LED_OFF;
-             ha_Presence = 0;
+             if (debug_g) { DPRINTF("radar 1 i/%d target NONE\n", l); }
+             radar1_presence = 0;
          }
      } 
+     //
+     for(int l = 0; radar2.read(); l++) {               
+         if (radar2.isTargetDetected) {
+             radar2_last_reads = millis()/1000;
+             uint16_t distance = radar2.distanceToTarget;
+             if (debug_g) { DPRINTF("radar 2 i/%d at: %ucm, range=%u\n", l, distance, ha_Range); }
+             if (distance < ha_Range * 100) {
+                 radar2_presence = 1;                                         // radar detected and in range
+             } else {                                                     // radar detected but too far
+                 radar2_presence = 0;
+             }
+         } else {                                                         // nothing on radar
+             if (debug_g) { DPRINTF("radar 2 i/%d target NONE\n", l); }
+             radar2_presence = 0;
+         }
+     } 
+     //
+     // If either detector has presence then we consider this presence for zigbee.
+     // If both detectors have no presence then this is no presence for zigbee.
+     // There are FF values for unitialized so those must be ignored.
+     //
+     if ((radar1_presence == 1) || (radar2_presence == 1))
+         ha_Presence = 1;
+     if ((radar1_presence == 0) && (radar2_presence == 0))
+         ha_Presence = 0;
 
-    
      //
      // And feed the watch dog because radar and zibgee are both ok and above
      // loop was not infinite.
@@ -753,6 +782,7 @@ void loop(void)
          if ((deltas > ha_Frequency*10)||(deltas == 0)) {
              zbPresence.setBinaryInput(ha_Presence == 0 ? false : true);       
              zbPresence.reportBinaryInput();
+             status_color = (ha_Presence == 1) ? RGB_LED_WHITE : RGB_LED_OFF;
              zigbee_last_notification = nows;
              last_ha_Presence = ha_Presence;
              if (debug_g) { DPRINTF("ha report sensor Presence=%d\n", ha_Presence); }

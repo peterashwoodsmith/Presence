@@ -4,8 +4,8 @@
 
 #include <Arduino.h>
 
-#define S3KM1110_DEBUG_COMMANDS    1
-#define S3KM1110_DEBUG_DATA        1
+// #define S3KM1110_DEBUG_COMMANDS    1
+// #define S3KM1110_DEBUG_DATA        1
 // #define S3KM1110_SKIP_READ_CONFIG_ON_BEGIN    1
 
 struct s3km1110ConfigParameters
