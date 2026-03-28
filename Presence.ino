@@ -103,7 +103,7 @@ static const char *TAG = "zPres";
 // in the Arduino menu for use with the debug enabled library and debug levels in that core. We can also compile in/out 
 // the watch dog timers. 
 //
-const bool debug_g = true;
+const bool debug_g = false;
 const bool wdt_g   = true;
 
 // 
@@ -342,8 +342,8 @@ uint16_t      ha_Frequency  = 0;    //                              ..... to con
 //
 uint32_t      radar1_last_reads = 0;    // When was radar last read (in seconds since startup)
 uint32_t      radar2_last_reads = 0;    // and for 2nd radar.
-uint16_t      radar1_presence   = 0xFF; // Unknown
-uint16_t      radar2_presence   = 0xFF; // Unknown
+uint16_t      radar1_presence   = 0;       
+uint16_t      radar2_presence   = 0;     
 
 //
 // These are just useful debugging functions to display the attributes that HA has given us.
@@ -520,12 +520,12 @@ void setup(void)
      //
      // Initialize all the major variables that are sent to/from zigbee/HA
      //
-     radar1_presence   = 0xFF;    // Unknown
-     radar2_presence   = 0xFF;    // Unknown
+     radar1_presence   = 0;    
+     radar2_presence   = 0;    
      ha_Presence       = 0xFF;    //  This is a sensor "INPUT" from this device to Zibgee 0 false, 1 true, FF unset
-     ha_Range      = 5;   // This is an output from Zibgee to this device to control range in meters 0..10
-     ha_Brightness = 5;   //      ..... to control brighness of night LED 0..10
-     ha_Frequency  = 2;   //      ..... to control max frequency of updates to Zibgee 0s, 1=10s, 2=20s,.. 10=100s.
+     ha_Range      = 5;           // This is an output from Zibgee to this device to control range in meters 0..10
+     ha_Brightness = 5;           //      ..... to control brighness of night LED 0..10
+     ha_Frequency  = 2;           //      ..... to control max frequency of updates to Zibgee 0s, 1=10s, 2=20s,.. 10=100s.
      //
      // Add the zibgee clusters (buttons/sliders etc.)
      //
@@ -669,6 +669,12 @@ void setup(void)
      //
      radar1_last_reads = millis()/1000;
      radar2_last_reads = radar1_last_reads;
+
+     //
+     // If we are operating with two radars, we alternate them starting with radar1.
+     // This minimized the interference between them which screws up measurements.
+     //
+     // radar1.disableTransmissions();
 }
 
 //
@@ -677,14 +683,14 @@ void setup(void)
 // disconnected we restart immediately. 
 //
 void loop(void)
-{ 
+{    
      //
      // We will swap the radars to avoid interference between them. We operate for 500ms on one antena, then 
      // put it in command mode (which stops it transmitting). Then we put take the second antenna out of 
      // command mode which start it functioning again. This is repeated continuously. While we can operate with 
      // both radars at the same time, we seem to get a lot of spurious results.
      //
-     delay(500);    // HERE WE SHOULD BE SWAPPING THE RADARS!!
+     delay(100);    // HERE WE SHOULD BE SWAPPING THE RADARS!!
 
      //
      // Any Zigbee problems we reset.
@@ -703,11 +709,11 @@ void loop(void)
      uint32_t delta1 = nows - radar1_last_reads;        // time since last success full radar read
      uint32_t delta2 = nows - radar2_last_reads;        // time since last success full radar read
      //
-     if (RADAR1_ENABLED && (delta1 > 60)) {                           
+     if (RADAR1_ENABLED && (delta1 > 10)) {                           
          if (debug_g) DPRINTF("A radar 1 disconnected while in loop()- restarting\n");
          ha_restart(7, nows);   
      }
-     if (RADAR2_ENABLED && (delta2 > 60)) {                           
+     if (RADAR2_ENABLED && (delta2 > 10)) {                           
          if (debug_g) DPRINTF("A radar 2 disconnected while in loop()- restarting\n");
          ha_restart(8, nows);   
      }
@@ -721,13 +727,25 @@ void loop(void)
      // If we get too much data then we have a problem and will reboot. We stop when both radars have
      // fed us everything they know. 
      //
-     int r1_count = 0;                                   // How many packets we got from radar1
-     int r2_count = 0;                                   // How many packets we got from radar2
+     int r1_count     = 0;                                   // How many packets we got from radar1
+     int r2_count     = 0;                                   // How many packets we got from radar2
+     int r1_min_dist  = 10000;                               // trigger on closest presence
+     int r2_min_dist  = 10000;
      while(true) {                                       // yes , we break out in the middle
            bool r1_read = RADAR1_ENABLED? radar1.read() : false;  // see if radar1 has a packet
            bool r2_read = RADAR2_ENABLED? radar2.read() : false;  // see if radar2 has a packet
-           if (r1_read) r1_count += 1;                   // accumulate tally for radar1
-           if (r2_read) r2_count += 1;                   // tally for radar2
+           if (r1_read) { 
+               radar1_last_reads = millis()/1000;
+               r1_count += 1;                   
+               if (radar1.isTargetDetected && (radar1.distanceToTarget < r1_min_dist))
+                   r1_min_dist = radar1.distanceToTarget;
+           }
+           if (r2_read) { 
+               radar2_last_reads = millis()/1000;
+               r2_count += 1;                   
+               if (radar2.isTargetDetected && (radar2.distanceToTarget < r2_min_dist))
+                    r2_min_dist = radar2.distanceToTarget;
+           }
            if ((!r1_read) && (!r2_read)) break;          // if nothing new get out and process
            if ((r1_count > 100) || (r2_count > 100)) {   // guard against infinite loop, reboot if so
                if (debug_g) DPRINTF("abnormal amount of radar data - can't keep up\n");
@@ -735,25 +753,21 @@ void loop(void)
            }
      } 
      //
-     // Look at the last radar packets we got and use them to decide if either radar has a target
-     // within the desire range.
+     // Process the minimum distances we saw and convert those to presence flags to be processed below.
      //
      if (r1_count > 0) { 
-         radar1_last_reads = millis()/1000;
-         radar1_presence = 0;
-         if (radar1.isTargetDetected) {
-             uint16_t distance = radar1.distanceToTarget;
-             if (debug_g) { DPRINTF("radar 1 at: %ucm, range=%u\n", distance, ha_Range); }
-             radar1_presence = (distance < ha_Range*100) ? 1 : 0;
+         radar1_presence = (r1_min_dist < ha_Range*100) ? 1 : 0;
+         if (debug_g) { 
+             DPRINTF("radar 1 min at: %ucm, range=%u presence=%d\n", r1_min_dist, ha_Range, radar1_presence);
          }
      } 
+     //
+     // Process the minimum distances we saw and convert those to presence flags to be processed below.
+     //
      if (r2_count > 0) { 
-         radar2_last_reads = millis()/1000;
-         radar2_presence = 0;
-         if (radar2.isTargetDetected) {
-             uint16_t distance = radar2.distanceToTarget;
-             if (debug_g) { DPRINTF("radar 2 at: %ucm, range=%u\n", distance, ha_Range); }
-             radar2_presence = (distance < ha_Range*100) ? 1 : 0;
+         radar2_presence = (r2_min_dist < ha_Range*100) ? 1 : 0;
+         if (debug_g) { 
+             DPRINTF("radar 2 min at: %ucm, range=%u presence=%d\n", r2_min_dist, ha_Range, radar2_presence);
          }
      } 
      //

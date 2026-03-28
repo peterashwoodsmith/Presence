@@ -41,6 +41,14 @@ bool s3km1110::read()
     return(false);
 }
 
+bool s3km1110::disableTransmissions()
+{    return (_openCommandMode());
+}
+
+bool s3km1110::enableTransmissions()
+{    return (_closeCommandMode());
+}
+
 #pragma mark - Send command
 
 bool s3km1110::_enableReportMode() 

@@ -40,6 +40,9 @@ class s3km1110 {
         bool setRadarConfigurationMaximumGates(uint8_t);
         bool setRadarConfigurationTargetDisappearanceDelay(uint16_t);
 
+        bool disableTransmissions();
+        bool enableTransmissions();
+
         String firmwareVersion;
         String serialNumber;
 
