@@ -79,6 +79,15 @@ s3km1110 radar1;
 s3km1110 radar2;
 
 //
+// These are the local variables that mirror the zibgee clusters. We have default preferences but if user changes them
+// via HA we get told about the changes and we also write them to NVS so that we can reread them after a reboot.
+//
+uint16_t      ha_Presence   = 0xFF; // This is a sensor "INPUT" from this device to Zibgee 0 false, 1 true, FF unset
+uint16_t      ha_Range      = 2;    // This is an output from Zibgee to this device to control range in meters 0..10
+uint16_t      ha_Brightness = 2;    //                              ..... to control brighness of night LED 0..10
+uint16_t      ha_Frequency  = 2;    //                              ..... to control max frequency of updates to Zibgee 0..10 min
+
+//
 // Decide which or both radars to use.
 //
 const bool RADAR1_ENABLED = true;
@@ -111,7 +120,8 @@ const bool wdt_g   = true;
 // and track last uptime etc. for display via a Zigbee debug cluster sensor.
 //
 const char       *ha_nvs_name = "_ZPRES_";                 // Unique name for our partition
-const char       *ha_nvs_vname= "_vars_";                  // name for our packeed variables
+const char       *ha_nvs_vname_debug = "_vars_";           // name for our packeed debug variables
+const char       *ha_nvs_vname_vars  = "_vars_v";          // name for our packed cluster variables
 nvs_handle_t      ha_nvs_handle = 0;                       // Once open this is read/write to NVS
 uint32_t          ha_nvs_last_uptime = 0;                  // minutes we were up last time before reboot
 uint32_t          ha_nvs_last_reboot_reason = 0;           // why we rebooted last time. (0 factory reset)
@@ -121,7 +131,7 @@ uint32_t          ha_nvs_last_reboot_count = 0;            // increase each rebo
 // We are looking for persistant values of the last reboot reason and last uptime. We store these two packed
 // into a single Uint32 which we depack after reading from the NVS.
 //
-void ha_nvs_read()
+void ha_nvs_read_debug()
 {    
      ha_nvs_last_reboot_reason = 0;
      ha_nvs_last_uptime        = 0;
@@ -132,18 +142,18 @@ void ha_nvs_read()
         // NVS partition was truncated and needs to be erased
         nvs_flash_erase();
         nvs_flash_init();
-        if (debug_g) DPRINTF("ha_nvs_read - nvs_flash_init\n", esp_err_to_name(err));
+        if (debug_g) DPRINTF("ha_nvs_read_debug - nvs_flash_init\n", esp_err_to_name(err));
      }
      err = nvs_open(ha_nvs_name, NVS_READWRITE, &ha_nvs_handle);
      if (err != ESP_OK) {
-        if (debug_g) DPRINTF("ha_nvs_read - Error (%s) opening NVS name %s!\n", esp_err_to_name(err), ha_nvs_name);
+        if (debug_g) DPRINTF("ha_nvs_read_debug- Error (%s) opening NVS name %s!\n", esp_err_to_name(err), ha_nvs_vname_debug);
         return;
      }  
      //
      uint32_t vars;
-     err = nvs_get_u32(ha_nvs_handle, ha_nvs_vname, &vars);
+     err = nvs_get_u32(ha_nvs_handle, ha_nvs_vname_debug, &vars);
      if (err != ESP_OK) {
-          if (debug_g) DPRINTF("ha_nvs_read - cant get variable name %s\n", ha_nvs_name);
+          if (debug_g) DPRINTF("ha_nvs_read_debug - cant get variable name %s\n", ha_nvs_vname_debug);
           return;
      }
      ha_nvs_last_reboot_reason  = vars         & 0xff;
@@ -174,7 +184,7 @@ void ha_nvs_read()
       * ESP_RST_CPU_LOCKUP, //!< Reset due to CPU lock up (double exception)
       */
      if (debug_g) {
-          DPRINTF("ha_nvs_read got vars=%x, reason %d, count %d, uptime=%d\n", vars,
+          DPRINTF("ha_nvs_read_debug got vars=%x, reason %d, count %d, uptime=%d\n", vars,
                ha_nvs_last_reboot_reason, ha_nvs_last_reboot_count, ha_nvs_last_uptime);
      }
 }
@@ -182,25 +192,82 @@ void ha_nvs_read()
 //
 // And here is the write to NVS of the attributes after they have been changed and sent to the Heat Pump
 //
-void ha_nvs_write(uint32_t reason = 0, uint32_t uptime = 0)
+void ha_nvs_write_debug(uint32_t reason = 0, uint32_t uptime = 0)
 {
      ha_nvs_last_reboot_count = (ha_nvs_last_reboot_count + 1) & 0xff;
      reason &= 0xff;
      uptime &= 0x0000fffff;
      uint32_t vars  = reason | (ha_nvs_last_reboot_count << 8) | (uptime << 16);
      if (debug_g) {
-          DPRINTF("ha_nvs_write got vars=%x, reason %d, count %d, uptime=%d\n", vars, reason, ha_nvs_last_reboot_count, uptime);
+          DPRINTF("ha_nvs_write_debug got vars=%x, reason %d, count %d, uptime=%d\n", vars, reason, ha_nvs_last_reboot_count, uptime);
      }
-     esp_err_t err = nvs_set_u32(ha_nvs_handle, ha_nvs_vname, vars);
+     esp_err_t err = nvs_set_u32(ha_nvs_handle, ha_nvs_vname_debug, vars);
      if (err != ESP_OK) {
-         if (debug_g) DPRINTF("ha_nvs_write  %s can't write, because %s\n", ha_nvs_vname, esp_err_to_name(err));
+         if (debug_g) DPRINTF("ha_nvs_write_debug  %s can't write, because %s\n", ha_nvs_vname_debug, esp_err_to_name(err));
          return;
      }
      err = nvs_commit(ha_nvs_handle);
      if (err != ESP_OK) {
-         if (debug_g) DPRINTF("ha_nvs_write %s can't commit, because %s\n", ha_nvs_vname, esp_err_to_name(err));
+         if (debug_g) DPRINTF("ha_nvs_write %s can't commit, because %s\n", ha_nvs_vname_debug, esp_err_to_name(err));
      }  
 }
+
+//
+// We are looking for persistant values of the cluster variables which we wrote when they were changed by the user.
+//
+void ha_nvs_read_vars()
+{    
+     esp_err_t err = nvs_flash_init();
+     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        // NVS partition was truncated and needs to be erased
+        nvs_flash_erase();
+        nvs_flash_init();
+        if (debug_g) DPRINTF("ha_nvs_read_vars - nvs_flash_init\n", esp_err_to_name(err));
+     }
+     err = nvs_open(ha_nvs_name, NVS_READWRITE, &ha_nvs_handle);
+     if (err != ESP_OK) {
+        if (debug_g) DPRINTF("ha_nvs_read_vars - Error (%s) opening NVS name %s!\n", esp_err_to_name(err), ha_nvs_vname_vars);
+        return;
+     }  
+     //
+     uint32_t vars;
+     err = nvs_get_u32(ha_nvs_handle, ha_nvs_vname_vars, &vars);
+     if (err != ESP_OK) {
+          if (debug_g) DPRINTF("ha_nvs_read_vars - cant get variable name %s\n", ha_nvs_vname_vars);
+          return;
+     }
+     ha_Range        = vars & 0xff;  vars >>= 8;
+     ha_Frequency    = vars & 0xff;  vars >>= 8;
+     ha_Brightness   = vars & 0xff;
+
+     if (debug_g) {
+          DPRINTF("ha_nvs_read_vars got vars=%x, Brightness %x, Frequency %x, Range %x\n",
+                  vars, ha_Brightness, ha_Frequency, ha_Range);
+     }
+}
+
+//
+// And here is the write to NVS of the attributes after they have been changed and sent to the Heat Pump
+//
+void ha_nvs_write_vars()
+{    uint32_t vars  = (ha_Brightness & 0xff);        // Pack the cluster variables into three bytes
+              vars <<= 8;
+              vars |= (ha_Frequency & 0xff);         // for storage in NVS.
+              vars <<= 8;
+              vars |= (ha_Range & 0xff);
+     if (debug_g) 
+          DPRINTF("ha_nvs_write_vars got vars=%x, Brightness %x, Frequency %x, Range %x\n", vars, ha_Brightness, ha_Frequency, ha_Range);
+     esp_err_t err = nvs_set_u32(ha_nvs_handle, ha_nvs_vname_vars, vars);
+     if (err != ESP_OK) {
+         if (debug_g) DPRINTF("ha_nvs_write_vars  %s can't write, because %s\n", ha_nvs_vname_vars, esp_err_to_name(err));
+         return;
+     }
+     err = nvs_commit(ha_nvs_handle);
+     if (err != ESP_OK) {
+         if (debug_g) DPRINTF("ha_nvs_write %s can't commit, because %s\n", ha_nvs_vname_vars, esp_err_to_name(err));
+     }  
+}
+
 // 
 // Function complete shutdown and restart. Forward declared also a flash sequence for factory reset.
 //
@@ -294,7 +361,8 @@ void hw_setup()
 //
 void ha_restart(uint32_t reason, uint32_t uptime)
 {  
-     ha_nvs_write(reason, uptime);        // remember why we are restarting so it can be shown in HA next time
+     ha_nvs_write_vars();                 // Remember user set cluster variables
+     ha_nvs_write_debug(reason, uptime);  // remember why we are restarting so it can be shown in HA next time
      rgb_led_set(RGB_LED_OFF);            // Sometimes gets stuck on, don't know why perhaps timing.      
      delay(100);
      rgb_led_set(RGB_LED_OFF);            // So do it twice .
@@ -331,13 +399,6 @@ ZigbeeBinary      zbPresence      = ZigbeeBinary(14);      // Presence yes/no
 ZigbeeAnalog      zbRange         = ZigbeeAnalog(15);      // Trigger presence to zibgee if range < this. 0 means no trigger
 ZigbeeAnalog      zbBrightness    = ZigbeeAnalog(16);      // How bright is night light Presence indicator
 ZigbeeAnalog      zbFrequency     = ZigbeeAnalog(17);      // min number of seconds between zibgee updates.
-//
-// These are the local variables that mirror the zibgee clusters above.
-//
-uint16_t      ha_Presence   = 0xFF; // This is a sensor "INPUT" from this device to Zibgee 0 false, 1 true, FF unset
-uint16_t      ha_Range      = 5;    // This is an output from Zibgee to this device to control range in meters 0..10
-uint16_t      ha_Brightness = 5;    //                              ..... to control brighness of night LED 0..10
-uint16_t      ha_Frequency  = 0;    //                              ..... to control max frequency of updates to Zibgee 0..10 min
 
 //
 // For detecting dead radar1.
@@ -358,9 +419,9 @@ void ha_displayFrequency()     { DPRINTF("Frequency   = %d\n", ha_Frequency);  }
 //
 // Callbacks to set the attributes when updated by zibgee
 //
-void ha_setRange     (float v) { ha_Range = v;      if (debug_g) ha_displayRange();      }
-void ha_setBrightness(float v) { ha_Brightness = v; if (debug_g) ha_displayBrightness(); }
-void ha_setFrequency (float v) { ha_Frequency = v;  if (debug_g) ha_displayFrequency();  }
+void ha_setRange     (float v) { ha_Range = v;      ha_nvs_write_vars(); if (debug_g) ha_displayRange();      }
+void ha_setBrightness(float v) { ha_Brightness = v; ha_nvs_write_vars(); if (debug_g) ha_displayBrightness(); }
+void ha_setFrequency (float v) { ha_Frequency = v;  ha_nvs_write_vars(); if (debug_g) ha_displayFrequency();  }
 // 
 // Keep HA up to date with any changes that happen.
 //
@@ -516,18 +577,23 @@ void setup(void)
      }
 
      //
-     // We get debug information from last reboot (uptime and reboot reason etc.)
-     ha_nvs_read();
-
-     //
      // Initialize all the major variables that are sent to/from zigbee/HA
      //
      radar1_presence   = 0;    
      radar2_presence   = 0;    
      ha_Presence       = 0xFF;    //  This is a sensor "INPUT" from this device to Zibgee 0 false, 1 true, FF unset
-     ha_Range      = 5;           // This is an output from Zibgee to this device to control range in meters 0..10
-     ha_Brightness = 5;           //      ..... to control brighness of night LED 0..10
-     ha_Frequency  = 2;           //      ..... to control max frequency of updates to Zibgee 0s, 1=10s, 2=20s,.. 10=100s.
+     ha_Range          = 2;       // This is an output from Zibgee to this device to control range in meters 0..10
+     ha_Brightness     = 2;       //      ..... to control brighness of night LED 0..10
+     ha_Frequency      = 2;       //      ..... to control max frequency of updates to Zibgee 0s, 1=10s, 2=20s,.. 10=100s.
+
+     //
+     // We get debug information from last reboot (uptime and reboot reason etc.) We also read the last zibgee settings for 
+     // range, brightness and frequency and synch them with zigbee/HA otherwise it seems to override what the last user 
+     // setting was.
+     //
+     ha_nvs_read_debug();   // Get the debug last reboot stuff.
+     ha_nvs_read_vars();    // Cluster variables read if they are present in NVS.
+
      //
      // Add the zibgee clusters (buttons/sliders etc.)
      //
