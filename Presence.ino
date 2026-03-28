@@ -227,7 +227,8 @@ void isr_resetButtonPress()
 
 //
 // Control of the color LED for various purposes. We can set a few different colors by RGB and also
-// can vary the brightness.
+// can vary the brightness. The brightness scale is not linear, we allow more options at the dim end for
+// night light use with only a very few at full bright/1/2 bright etc. Also 0 for off completely.
 //
 const uint8_t RGB_LED_OFF    = 0;        // Enums are causing compiler problems when passed as first argument.
 const uint8_t RGB_LED_WHITE  = 1;        // so back to old school.
@@ -241,7 +242,8 @@ const uint8_t RGB_MIN        = 0;
 //
 void rgb_led_set(uint32_t color, uint32_t brightness = 10) {
      if (brightness > 10) brightness = 10;
-     int rbg_max = (RGB_BRIGHTNESS * brightness) / 10;
+     static int lk_bright[11] = { 0, 2, 3, 4, 5, 10, 15, 20, 25, 30, RGB_BRIGHTNESS};
+     int rbg_max = lk_bright[brightness];
      switch(color) {                                                      //RED     GREEN     BLUE
          case RGB_LED_GREEN : rgbLedWriteOrdered(RGB_BUILTIN, RGB_ORDER, RGB_MIN, rbg_max,  RGB_MIN); break;
          case RGB_LED_WHITE : rgbLedWriteOrdered(RGB_BUILTIN, RGB_ORDER, rbg_max, rbg_max,  rbg_max); break;
