@@ -423,11 +423,13 @@ void ha_setRange     (float v) { ha_Range = v;      ha_nvs_write_vars(); if (deb
 void ha_setBrightness(float v) { ha_Brightness = v; ha_nvs_write_vars(); if (debug_g) ha_displayBrightness(); }
 void ha_setFrequency (float v) { ha_Frequency = v;  ha_nvs_write_vars(); if (debug_g) ha_displayFrequency();  }
 // 
-// Keep HA up to date with any changes that happen.
+// Keep HA up to date with any changes that happen. Note that we do not sync the presence sensor as this would
+// interfere with the control of its synching. Instead the presence sensor is set of FF to start so that first
+// iteration in main loop will see a change and trigger and update. 
 //
 void ha_sync_status()
 {
-     if (debug_g) DPRINTF("HA sync %d\n", ha_Presence);
+     if (debug_g) DPRINTF("HA sync");
      //
      // Sync the control clusters
      //
@@ -437,9 +439,6 @@ void ha_sync_status()
      zbBrightness.reportAnalogOutput();
      zbFrequency.setAnalogOutput(ha_Frequency);
      zbFrequency.reportAnalogOutput();
-     // Sync the presence cluster
-     zbPresence.setBinaryInput(ha_Presence == 1);  // careful because 0xff means unset
-     zbPresence.reportBinaryInput();
      // Sync the debug clusters
      zbRebootReason.setAnalogInput(ha_nvs_last_reboot_reason);
      zbLastUptime.setAnalogInput(ha_nvs_last_uptime);
@@ -449,6 +448,9 @@ void ha_sync_status()
      zbLastUptime.reportAnalogInput();
      zbRebootCount.reportAnalogInput();
      zbUptime.reportAnalogInput();
+     // No do NOT sync the presence cluster here.
+     // Thats because this function is called every 5 minutes or so and it
+     // would interfere with the time control of those updates.
 }
 
 //
@@ -771,19 +773,21 @@ void loop(void)
      //
      // Any Radar Serial problems we will reset. Just check to see if its been more than 10 seconds since
      // we saw any radar data, if so a full reboot will occur and we remember the reason and time.
-     // Actually we continue to operate even if one of the sensors is dead.
+     // In debug mode howerver all the I/O can slow things down so disable this check in debug mode.
      //
-     uint32_t nows = millis()/1000;                     // Current time in seconds since reboot
-     uint32_t delta1 = nows - radar1_last_reads;        // time since last success full radar read
-     uint32_t delta2 = nows - radar2_last_reads;        // time since last success full radar read
-     //
-     if (RADAR1_ENABLED && (delta1 > 10)) {                           
-         if (debug_g) DPRINTF("A radar 1 disconnected while in loop()- restarting\n");
-         ha_restart(7, nows);   
-     }
-     if (RADAR2_ENABLED && (delta2 > 10)) {                           
-         if (debug_g) DPRINTF("A radar 2 disconnected while in loop()- restarting\n");
-         ha_restart(8, nows);   
+     if (!debug_g) {
+         uint32_t nows = millis()/1000;                     // Current time in seconds since reboot
+         uint32_t delta1 = nows - radar1_last_reads;        // time since last success full radar read
+         uint32_t delta2 = nows - radar2_last_reads;        // time since last success full radar read
+        //
+         if (RADAR1_ENABLED && (delta1 > 10)) {                           
+             if (debug_g) DPRINTF("A radar 1 disconnected while in loop()- restarting\n");
+             ha_restart(7, nows);   
+         }
+         if (RADAR2_ENABLED && (delta2 > 10)) {                           
+             if (debug_g) DPRINTF("A radar 2 disconnected while in loop()- restarting\n");
+             ha_restart(8, nows);   
+         }
      }
      //
      // Initial conditions we don't know what color to set of if any presene has been
@@ -857,14 +861,15 @@ void loop(void)
      // may need to throttle a bit to avoid too many updates to Zibgee. 
      // We track last time we send a notification to zibgee about presence gone and
      // will suppress it for the required number of seconds to meet the desired
-     // maximum frequency as set in the ha_Frequency cluster.
+     // maximum frequency as set in the ha_Frequency cluster. We do however allow
+     // presence notifications to go instantly.
      //
      static uint16_t last_ha_Presence = 0xFF;
      static uint32_t zigbee_last_notification = 0; 
      if (ha_Presence != last_ha_Presence) {
          uint32_t nows = millis()/1000;
-         uint32_t deltas = (ha_Presence == 0) ? nows - zigbee_last_notification : 0;
-         if ((deltas > ha_Frequency*10)||(deltas == 0)) {
+         int32_t  deltas = (ha_Presence == 0) ? nows - zigbee_last_notification : -1;
+         if ((deltas > ha_Frequency*10)||(deltas <  0)) {
              zbPresence.setBinaryInput(ha_Presence == 0 ? false : true);       
              zbPresence.reportBinaryInput();
              status_color = (ha_Presence == 1) ? RGB_LED_WHITE : RGB_LED_OFF;
