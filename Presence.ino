@@ -752,15 +752,28 @@ void setup(void)
 // but not too frequently. If radar goes down we won't refresh watch dog, so it will reset eventually. If zibgee goes 
 // disconnected we restart immediately. 
 //
-void loop(void)
-{    
-     //
+void loop(void)  
+{    //
      // We will swap the radars to avoid interference between them. We operate for 500ms on one antena, then 
      // put it in command mode (which stops it transmitting). Then we put take the second antenna out of 
      // command mode which start it functioning again. This is repeated continuously. While we can operate with 
      // both radars at the same time, we seem to get a lot of spurious results.
      //
-     delay(100);    // HERE WE SHOULD BE SWAPPING THE RADARS!!
+     uint32_t       nows      = millis()/1000;      // Seconds 1,2,3,4....
+     uint8_t        mode      = nows % 2;           // Even seconds one antenna, odd seconds the other 0,1,0,1,0,1
+     static uint8_t last_mode = 0xff;               // invalid starting mode to force a first switch
+     //
+     if (last_mode != mode) {                       // if not in the proper mode for our even/odd seconds
+         if (mode == 0) {                           // supposed to be using radar1 so enable it.
+             radar1.enableTransmissions();
+             radar2.disableTransmissions();         // and disable radar2
+             last_mode = 0;                         // remember mode so we don't keep doing it.
+         } else {                                   // supposed to be using radar2 to enable it.
+             radar1.disableTransmissions();         
+             radar2.enableTransmissions();          // and disable radar1.
+             last_mode = 1;                         // remember mode so we don't keep doing it.
+         }
+     }
 
      //
      // Any Zigbee problems we reset.
