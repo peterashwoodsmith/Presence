@@ -739,12 +739,6 @@ void setup(void)
      //
      radar1_last_reads = millis()/1000;
      radar2_last_reads = radar1_last_reads;
-
-     //
-     // If we are operating with two radars, we alternate them starting with radar1.
-     // This minimized the interference between them which screws up measurements.
-     //
-     // radar1.disableTransmissions();
 }
 
 //
@@ -753,25 +747,27 @@ void setup(void)
 // disconnected we restart immediately. 
 //
 void loop(void)  
-{    //
-     // We will swap the radars to avoid interference between them. We operate for 500ms on one antena, then 
-     // put it in command mode (which stops it transmitting). Then we put take the second antenna out of 
-     // command mode which start it functioning again. This is repeated continuously. While we can operate with 
-     // both radars at the same time, we seem to get a lot of spurious results.
-     //
-     uint32_t       nows      = millis()/1000;      // Seconds 1,2,3,4....
-     uint8_t        mode      = nows % 2;           // Even seconds one antenna, odd seconds the other 0,1,0,1,0,1
-     static uint8_t last_mode = 0xff;               // invalid starting mode to force a first switch
-     //
-     if (last_mode != mode) {                       // if not in the proper mode for our even/odd seconds
-         if (mode == 0) {                           // supposed to be using radar1 so enable it.
-             radar1.enableTransmissions();
-             radar2.disableTransmissions();         // and disable radar2
-             last_mode = 0;                         // remember mode so we don't keep doing it.
-         } else {                                   // supposed to be using radar2 to enable it.
-             radar1.disableTransmissions();         
-             radar2.enableTransmissions();          // and disable radar1.
-             last_mode = 1;                         // remember mode so we don't keep doing it.
+{    if (RADAR1_ENABLED && RADAR2_ENABLED) {
+         //
+         // We will swap the radars to avoid interference between them. We operate for 500ms on one antena, then 
+         // put it in command mode (which stops it transmitting). Then we put take the second antenna out of 
+         // command mode which start it functioning again. This is repeated continuously. While we can operate with 
+         // both radars at the same time, we seem to get a lot of spurious results.
+         //
+         uint32_t       nows      = millis()/500;       // 1/2 Seconds 1,2,3,4....
+         uint8_t        mode      = nows % 2;           // Even 1/2 seconds one antenna, odd 1/2 econds the other 0,1,0,1,0,1
+         static uint8_t last_mode = 0xff;               // invalid starting mode to force a first switch
+         //
+         if (last_mode != mode) {                       // if not in the proper mode for our even/odd seconds
+             if (mode == 0) {                           // supposed to be using radar1 so enable it.
+                 radar1.enableTransmissions();
+                 radar2.disableTransmissions();         // and disable radar2
+                 last_mode = 0;                         // remember mode so we don't keep doing it.
+             } else {                                   // supposed to be using radar2 to enable it.
+                 radar1.disableTransmissions();         
+                 radar2.enableTransmissions();          // and disable radar1.
+                 last_mode = 1;                         // remember mode so we don't keep doing it.
+             }
          }
      }
 
@@ -812,24 +808,26 @@ void loop(void)
      // If we get too much data then we have a problem and will reboot. We stop when both radars have
      // fed us everything they know. 
      //
-     int r1_count     = 0;                                   // How many packets we got from radar1
-     int r2_count     = 0;                                   // How many packets we got from radar2
-     int r1_min_dist  = 10000;                               // trigger on closest presence
-     int r2_min_dist  = 10000;
-     while(true) {                                       // yes , we break out in the middle
+     int          r1_count     = 0;                               // How many packets we got from radar1
+     int          r2_count     = 0;                               // How many packets we got from radar2
+     static float r1_avg_dist  = 0.0;                             // moving average from radar1
+     static float r2_avg_dist  = 0.0;                             // Moving average from radar2
+     const  float alpha        = 0.2;                             // Moving average alpha
+     //
+     while(true) {                                                // yes , we break out in the middle
            bool r1_read = RADAR1_ENABLED? radar1.read() : false;  // see if radar1 has a packet
            bool r2_read = RADAR2_ENABLED? radar2.read() : false;  // see if radar2 has a packet
            if (r1_read) { 
                radar1_last_reads = millis()/1000;
                r1_count += 1;                   
-               if (radar1.isTargetDetected && (radar1.distanceToTarget < r1_min_dist))
-                   r1_min_dist = radar1.distanceToTarget;
+               if (radar1.isTargetDetected)
+                   r1_avg_dist = (alpha * radar1.distanceToTarget) + ((1.0 - alpha) * r1_avg_dist);
            }
            if (r2_read) { 
                radar2_last_reads = millis()/1000;
                r2_count += 1;                   
-               if (radar2.isTargetDetected && (radar2.distanceToTarget < r2_min_dist))
-                    r2_min_dist = radar2.distanceToTarget;
+               if (radar2.isTargetDetected)
+                   r2_avg_dist = (alpha * radar2.distanceToTarget) + ((1.0 - alpha) * r2_avg_dist);
            }
            if ((!r1_read) && (!r2_read)) break;          // if nothing new get out and process
            if ((r1_count > 100) || (r2_count > 100)) {   // guard against infinite loop, reboot if so
@@ -837,33 +835,10 @@ void loop(void)
                ha_restart(9, millis()/1000);   
            }
      } 
-     //
-     // Process the minimum distances we saw and convert those to presence flags to be processed below.
-     //
-     if (r1_count > 0) { 
-         radar1_presence = (r1_min_dist < ha_Range*100) ? 1 : 0;
-         if (debug_g) { 
-             DPRINTF("radar 1 min at: %ucm, range=%u presence=%d\n", r1_min_dist, ha_Range, radar1_presence);
-         }
-     } 
-     //
-     // Process the minimum distances we saw and convert those to presence flags to be processed below.
-     //
-     if (r2_count > 0) { 
-         radar2_presence = (r2_min_dist < ha_Range*100) ? 1 : 0;
-         if (debug_g) { 
-             DPRINTF("radar 2 min at: %ucm, range=%u presence=%d\n", r2_min_dist, ha_Range, radar2_presence);
-         }
-     } 
-     //
-     // If either detector has presence then we consider this presence for zigbee.
-     // If both detectors have no presence then this is no presence for zigbee.
-     // There are FF values for unitialized so those must be ignored.
-     //
-     if ((radar1_presence == 1) || (radar2_presence == 1))
-         ha_Presence = 1;
-     if ((radar1_presence == 0) && (radar2_presence == 0))
-         ha_Presence = 0;
+     radar1_presence = (r1_avg_dist < ha_Range*100) ? 1 : 0;
+     radar2_presence = (r2_avg_dist < ha_Range*100) ? 1 : 0;
+     ha_Presence     = radar1_presence || radar2_presence;
+     
      //
      // And feed the watch dog because radar and zibgee are both ok and above
      // loop was not infinite.
@@ -881,16 +856,29 @@ void loop(void)
      static uint32_t zigbee_last_notification = 0; 
      if (ha_Presence != last_ha_Presence) {
          uint32_t nows = millis()/1000;
-         int32_t  deltas = (ha_Presence == 0) ? nows - zigbee_last_notification : -1;
-         if ((deltas > ha_Frequency*10)||(deltas <  0)) {
-             zbPresence.setBinaryInput(ha_Presence == 0 ? false : true);       
-             zbPresence.reportBinaryInput();
-             status_color = (ha_Presence == 1) ? RGB_LED_WHITE : RGB_LED_OFF;
-             zigbee_last_notification = nows;
-             last_ha_Presence = ha_Presence;
-             if (debug_g) { DPRINTF("ha report sensor Presence=%d\n", ha_Presence); }
+         int32_t  deltas = nows - zigbee_last_notification;
+         if (ha_Presence == 0) {
+             if (deltas >= ha_Frequency*10) {
+                 zbPresence.setBinaryInput(false);       
+                 zbPresence.reportBinaryInput();
+                 status_color = RGB_LED_OFF;
+                 zigbee_last_notification = nows;
+                 last_ha_Presence = 0;
+                 if (debug_g) { DPRINTF("ha report NO Presence\n"); }
+             } else {
+                 if (debug_g) { DPRINTF("ha report NO Presence SUPPRESSED %us WAIT=%us\n", deltas, ha_Frequency*10); }
+             }
          } else {
-             if (debug_g) { DPRINTF("ha report sensor Presence=0 SUPPRESSED %us WAIT=%us\n", deltas, ha_Frequency*10); }
+             if (deltas >= ha_Frequency*5) {
+                 zbPresence.setBinaryInput(true);       
+                 zbPresence.reportBinaryInput();
+                 status_color = RGB_LED_WHITE;
+                 zigbee_last_notification = nows;
+                 last_ha_Presence = 1;
+                 if (debug_g) { DPRINTF("ha report Presence\n"); }
+             } else {
+                 if (debug_g) { DPRINTF("ha report Presence SUPPRESSED %us WAIT=%us\n", deltas, ha_Frequency*5); }
+             }
          }
      }
      //
