@@ -90,7 +90,7 @@ uint16_t      ha_Frequency  = 2;    //                              ..... to con
 //
 // Decide which or both radars to use.
 //
-const bool RADAR1_ENABLED = true;
+const bool RADAR1_ENABLED = false;
 const bool RADAR2_ENABLED = true;
 //
 // Hardware Pin configurations.
@@ -405,8 +405,6 @@ ZigbeeAnalog      zbFrequency     = ZigbeeAnalog(17);      // min number of seco
 //
 uint32_t      radar1_last_reads = 0;    // When was radar last read (in seconds since startup)
 uint32_t      radar2_last_reads = 0;    // and for 2nd radar.
-uint16_t      radar1_presence   = 0;       
-uint16_t      radar2_presence   = 0;     
 
 //
 // These are just useful debugging functions to display the attributes that HA has given us.
@@ -581,8 +579,6 @@ void setup(void)
      //
      // Initialize all the major variables that are sent to/from zigbee/HA
      //
-     radar1_presence   = 0;    
-     radar2_presence   = 0;    
      ha_Presence       = 0xFF;    //  This is a sensor "INPUT" from this device to Zibgee 0 false, 1 true, FF unset
      ha_Range          = 2;       // This is an output from Zibgee to this device to control range in meters 0..10
      ha_Brightness     = 2;       //      ..... to control brighness of night LED 0..10
@@ -600,7 +596,7 @@ void setup(void)
      // Add the zibgee clusters (buttons/sliders etc.)
      //
      const char *MFGR = "RiverView";      // Because my home office looks out over the ottwawa river ;)
-     const char *MODL = "zPres001";       // Presence Sensor 001
+     const char *MODL = "zPres002";       // Presence Sensor 001
 
      if (debug_g) DPRINTF("Range Cluster\n");
      zbRange.setManufacturerAndModel(MFGR,MODL);
@@ -747,30 +743,7 @@ void setup(void)
 // disconnected we restart immediately. 
 //
 void loop(void)  
-{    if (RADAR1_ENABLED && RADAR2_ENABLED) {
-         //
-         // We will swap the radars to avoid interference between them. We operate for 500ms on one antena, then 
-         // put it in command mode (which stops it transmitting). Then we put take the second antenna out of 
-         // command mode which start it functioning again. This is repeated continuously. While we can operate with 
-         // both radars at the same time, we seem to get a lot of spurious results.
-         //
-         uint32_t       nows      = millis()/500;       // 1/2 Seconds 1,2,3,4....
-         uint8_t        mode      = nows % 2;           // Even 1/2 seconds one antenna, odd 1/2 econds the other 0,1,0,1,0,1
-         static uint8_t last_mode = 0xff;               // invalid starting mode to force a first switch
-         //
-         if (last_mode != mode) {                       // if not in the proper mode for our even/odd seconds
-             if (mode == 0) {                           // supposed to be using radar1 so enable it.
-                 radar1.enableTransmissions();
-                 radar2.disableTransmissions();         // and disable radar2
-                 last_mode = 0;                         // remember mode so we don't keep doing it.
-             } else {                                   // supposed to be using radar2 to enable it.
-                 radar1.disableTransmissions();         
-                 radar2.enableTransmissions();          // and disable radar1.
-                 last_mode = 1;                         // remember mode so we don't keep doing it.
-             }
-         }
-     }
-
+{    
      //
      // Any Zigbee problems we reset.
      //
@@ -810,34 +783,43 @@ void loop(void)
      //
      int          r1_count     = 0;                               // How many packets we got from radar1
      int          r2_count     = 0;                               // How many packets we got from radar2
-     static float r1_avg_dist  = 0.0;                             // moving average from radar1
-     static float r2_avg_dist  = 0.0;                             // Moving average from radar2
-     const  float alpha        = 0.2;                             // Moving average alpha
+     int          r1_dist      = -1;                              // unknown
+     int          r2_dist      = -1;                              // unknown
+     const int    INFINITE_DIST= 100 * 100;                       // 100cm x 100 meters. 
      //
      while(true) {                                                // yes , we break out in the middle
            bool r1_read = RADAR1_ENABLED? radar1.read() : false;  // see if radar1 has a packet
            bool r2_read = RADAR2_ENABLED? radar2.read() : false;  // see if radar2 has a packet
            if (r1_read) { 
-               radar1_last_reads = millis()/1000;
-               r1_count += 1;                   
-               if (radar1.isTargetDetected)
-                   r1_avg_dist = (alpha * radar1.distanceToTarget) + ((1.0 - alpha) * r1_avg_dist);
+               radar1_last_reads = millis()/1000; 
+               r1_count += 1;
+               r1_dist = radar1.isTargetDetected ? radar1.distanceToTarget : INFINITE_DIST;                
            }
            if (r2_read) { 
-               radar2_last_reads = millis()/1000;
-               r2_count += 1;                   
-               if (radar2.isTargetDetected)
-                   r2_avg_dist = (alpha * radar2.distanceToTarget) + ((1.0 - alpha) * r2_avg_dist);
+               radar2_last_reads = millis()/1000;          
+               r2_count += 1;
+               r2_dist = radar2.isTargetDetected ? radar2.distanceToTarget : INFINITE_DIST;              
            }
-           if ((!r1_read) && (!r2_read)) break;          // if nothing new get out and process
+           if (!r1_read && !r2_read) {                                   // No more data.
+              if ((r1_count > 0) && (r2_count > 0))  break;              // but we have data from both get out.
+              if ((r1_count > 0) && !RADAR2_ENABLED) break;              // data from only available r1
+              if ((r2_count > 0) && !RADAR1_ENABLED) break;              // data from only available r2
+           }
            if ((r1_count > 100) || (r2_count > 100)) {   // guard against infinite loop, reboot if so
                if (debug_g) DPRINTF("abnormal amount of radar data - can't keep up\n");
                ha_restart(9, millis()/1000);   
            }
      } 
-     radar1_presence = (r1_avg_dist < ha_Range*100) ? 1 : 0;
-     radar2_presence = (r2_avg_dist < ha_Range*100) ? 1 : 0;
-     ha_Presence     = radar1_presence || radar2_presence;
+
+     if (!RADAR1_ENABLED) r1_dist = INFINITE_DIST;
+     if (!RADAR2_ENABLED) r2_dist = INFINITE_DIST;
+     //
+     // We have read both radars so compute presence. Should both be >=0 at this point 
+     // but keep this because we play with upper code a lot and this is a precondition.
+     //
+     if ((r1_dist >= 0) && (r2_dist >= 0)) {                    // both radars were read.
+         ha_Presence = ((r1_dist <= ha_Range*100) || (r2_dist <= ha_Range*100)) ? 1 : 0;
+     } 
      
      //
      // And feed the watch dog because radar and zibgee are both ok and above

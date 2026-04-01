@@ -36,6 +36,8 @@ bool s3km1110::isActive()
 
 bool s3km1110::read()
 {
+    isTargetDetected = false;        // start fresh.
+    distanceToTarget = -1; 
     if (_uartRadar != NULL)
          return _read_frame();
     return(false);
