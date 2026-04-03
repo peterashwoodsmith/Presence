@@ -352,7 +352,11 @@ void rgb_led_set_factory_reset()
 void hw_setup()
 {   
      pinMode(isr_resetButtonPin, INPUT_PULLUP); 
-     attachInterrupt(digitalPinToInterrupt(isr_resetButtonPin), isr_resetButtonPress,   FALLING);  
+     attachInterrupt(digitalPinToInterrupt(isr_resetButtonPin), isr_resetButtonPress,   FALLING); 
+     //
+     // Turn off the red power LED because its annoying in a night light. 
+     //pinMode(8, OUTPUT);
+     //digitalWrite(8, LOW);
 }
 
 //
@@ -772,11 +776,6 @@ void loop(void)
          }
      }
      //
-     // Initial conditions we don't know what color to set of if any presene has been
-     // detected.
-     //
-     static int status_color = RGB_LED_OFF;     
-     //
      // Read as much data as we can from both radars, but guard against spending too much time here.
      // If we get too much data then we have a problem and will reboot. We stop when both radars have
      // fed us everything they know. 
@@ -843,7 +842,6 @@ void loop(void)
              if (deltas >= ha_Frequency*10) {
                  zbPresence.setBinaryInput(false);       
                  zbPresence.reportBinaryInput();
-                 status_color = RGB_LED_OFF;
                  zigbee_last_notification = nows;
                  last_ha_Presence = 0;
                  if (debug_g) { DPRINTF("ha report NO Presence\n"); }
@@ -854,7 +852,6 @@ void loop(void)
              if (deltas >= ha_Frequency*5) {
                  zbPresence.setBinaryInput(true);       
                  zbPresence.reportBinaryInput();
-                 status_color = RGB_LED_WHITE;
                  zigbee_last_notification = nows;
                  last_ha_Presence = 1;
                  if (debug_g) { DPRINTF("ha report Presence\n"); }
@@ -874,11 +871,15 @@ void loop(void)
             last_update_time = now_time;
             ha_sync_status();                 
         }
+     
+        // And decide on the RGB led color/brigtness. Presence it shows white at the selected brightness.
+        // Otherwise its a dim green that flashes periodically to indicate loop is running ok.
+        //
+        if (ha_Presence == 1) {
+            rgb_led_set(RGB_LED_WHITE, ha_Brightness);
+        } else {
+            int color =  (now_time) % 10 == 0 ? RGB_LED_GREEN : RGB_LED_OFF; 
+            rgb_led_set(color, 1);  
+        } 
      }
-     //
-     // Led is on for 4.5 seconds, then briefly on, repeat. Color depends on
-     // what happend above. White (night light) is the default). Note that the
-     // brightness comes from Zigbee and is set by callbacks.
-     //
-     rgb_led_set(status_color, ha_Brightness);
 }
