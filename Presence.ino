@@ -109,15 +109,15 @@ const char *MODL = "zPrH201";        // Presence Sensor H201
 #endif
 
 #if ESP32_H2
-    #define RADAR1_SERIAL        Serial0
-    #define RADAR1_RX            23
-    #define RADAR1_TX            24
-    #define RADAR2_SERIAL        Serial1
-    #define RADAR2_RX            -1
-    #define RADAR2_TX            -1
+    #define RADAR1_SERIAL         Serial1
+    #define RADAR1_RX             12
+    #define RADAR1_TX             22
+    #define RADAR2_SERIAL         Serial0     // This is unused
+    #define RADAR2_RX            -1          // Unused
+    #define RADAR2_TX            -1          // Unused
     const bool RADAR1_ENABLED     = true;
-    const bool RADAR2_ENABLED     = false;
-    const int  isr_resetButtonPin = 22;      
+    const bool RADAR2_ENABLED     = false;   // Unused
+    const int  isr_resetButtonPin = 10;      
 #endif
 
 //
