@@ -71,9 +71,58 @@
 #include "Zigbee.h"
 #include "esp_log.h"
 
+// Select which CPU, only one of course.
 //
-// This is the object that interfaces with the radar1 via Serial1 and
-// radar2 via Serial2.
+#define ESP32_H2 1
+// #define ESP32_C6 1
+
+//
+// Set 1 and you'll get lots of useful info as it runs. For debugging the lower layer Zibgee see the tools settings
+// in the Arduino menu for use with the debug enabled library and debug levels in that core. We can also compile in/out 
+// the watch dog timers and these are best left on especially once you are deploying the code.
+//
+const bool debug_g = true;
+const bool wdt_g   = true;
+
+//
+// When we register with Zibgee this is the manufacturer name and model that we use. I use 
+// RiverView because my home office looks out over a river and its good idea to make the model 
+// number unique and useful to identify the individual device.
+//
+const char *MFGR = "RiverView";      // Because my home office looks out over the ottwawa river ;)
+const char *MODL = "zPrH201";        // Presence Sensor H201
+
+//
+// Decide which or both radars to use depending on the CPU.
+// C6 we can use two radars, H2 we use one for now.
+//
+#if ESP32_C6
+    #   define RADAR1_SERIAL      Serial1
+    #   define RADAR1_RX          11
+    #   define RADAR1_TX          10
+    #   define RADAR2_SERIAL      Serial2
+    #   define RADAR2_RX          4
+    #   define RADAR2_TX          5
+    const bool RADAR1_ENABLED     = true;
+    const bool RADAR2_ENABLED     = true;
+    const int  isr_resetButtonPin = 18;                     
+#endif
+
+#if ESP32_H2
+    #define RADAR1_SERIAL        Serial0
+    #define RADAR1_RX            23
+    #define RADAR1_TX            24
+    #define RADAR2_SERIAL        Serial1
+    #define RADAR2_RX            -1
+    #define RADAR2_TX            -1
+    const bool RADAR1_ENABLED     = true;
+    const bool RADAR2_ENABLED     = false;
+    const int  isr_resetButtonPin = 22;      
+#endif
+
+//
+// This is the object that interfaces with the radar chip. C6 we can use two
+// radars, H2 we use just one.
 //
 s3km1110 radar1;
 s3km1110 radar2;
@@ -88,16 +137,6 @@ uint16_t      ha_Brightness = 2;    //                              ..... to con
 uint16_t      ha_Frequency  = 2;    //                              ..... to control max frequency of updates to Zibgee 0..10 min
 
 //
-// Decide which or both radars to use.
-//
-const bool RADAR1_ENABLED = false;
-const bool RADAR2_ENABLED = true;
-//
-// Hardware Pin configurations.
-//
-const int isr_resetButtonPin = 18;                      // Causes a factory reset by erasing all NVS
-
-//
 // Output unitless count app type missing so define it.
 //
 #define ESP_ZB_ZCL_AO_COUNT_UNITLESS_COUNT  ESP_ZB_ZCL_AO_SET_APP_TYPE_WITH_ID( ESP_ZB_ZCL_AO_APP_TYPE_COUNT_UNITLESS, 0x0000)
@@ -106,14 +145,6 @@ const int isr_resetButtonPin = 18;                      // Causes a factory rese
 //
 static const char *TAG = "zPres"; 
 #define DPRINTF(format, ...)  ESP_LOGD(TAG, format, ##__VA_ARGS__) 
-
-//
-// Set 1 and you'll get lots of useful info as it runs. For debugging the lower layer Zibgee see the tools settings
-// in the Arduino menu for use with the debug enabled library and debug levels in that core. We can also compile in/out 
-// the watch dog timers. 
-//
-const bool debug_g = false;
-const bool wdt_g   = true;
 
 // 
 // Non volatile storage for debugging. When we restart etc. we will write the reasons 
@@ -353,10 +384,6 @@ void hw_setup()
 {   
      pinMode(isr_resetButtonPin, INPUT_PULLUP); 
      attachInterrupt(digitalPinToInterrupt(isr_resetButtonPin), isr_resetButtonPress,   FALLING); 
-     //
-     // Turn off the red power LED because its annoying in a night light. 
-     //pinMode(8, OUTPUT);
-     //digitalWrite(8, LOW);
 }
 
 //
@@ -513,10 +540,10 @@ void setup(void)
      // up if they are configured.
      //
      if (RADAR1_ENABLED) {
-         Serial1.begin(115200, SERIAL_8N1,  11,  10);
+         RADAR1_SERIAL.begin(115200, SERIAL_8N1,  RADAR1_RX,  RADAR1_TX);
          bool isRadar1Enabled = false;
          for(int i=0; i<3; i++) {
-             if(radar1.begin(&Serial1, debug_g ? &Serial : NULL)) {
+             if(radar1.begin(&RADAR1_SERIAL, debug_g ? &Serial : NULL)) {
                 rgb_led_flash(RGB_LED_GREEN, RGB_LED_OFF);
                 isRadar1Enabled = true;
                 break;
@@ -547,10 +574,10 @@ void setup(void)
      }
    
      if (RADAR2_ENABLED) {
-         Serial2.begin(115200, SERIAL_8N1,  4,   5);
+         RADAR2_SERIAL.begin(115200, SERIAL_8N1, RADAR2_RX, RADAR2_TX);
          bool isRadar2Enabled = false;
          for(int i=0; i<3; i++) {
-             if(radar2.begin(&Serial2, debug_g ? &Serial : NULL)) {
+             if(radar2.begin(&RADAR2_SERIAL, debug_g ? &Serial : NULL)) {
                 rgb_led_flash(RGB_LED_GREEN, RGB_LED_OFF);
                 isRadar2Enabled = true;
                 break;
@@ -596,12 +623,9 @@ void setup(void)
      ha_nvs_read_debug();   // Get the debug last reboot stuff.
      ha_nvs_read_vars();    // Cluster variables read if they are present in NVS.
 
-     //
-     // Add the zibgee clusters (buttons/sliders etc.)
-     //
-     const char *MFGR = "RiverView";      // Because my home office looks out over the ottwawa river ;)
-     const char *MODL = "zPres002";       // Presence Sensor 001
-
+    //
+    // Now lest create the different cluster objects and hang then on the end point.
+    //
      if (debug_g) DPRINTF("Range Cluster\n");
      zbRange.setManufacturerAndModel(MFGR,MODL);
      zbRange.addAnalogOutput();
