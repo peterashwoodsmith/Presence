@@ -73,15 +73,15 @@
 
 // Select which CPU, only one of course.
 //
-#define ESP32_H2 1
-// #define ESP32_C6 1
+// #define ESP32_H2 1
+#define ESP32_C6 1
 
 //
 // Set 1 and you'll get lots of useful info as it runs. For debugging the lower layer Zibgee see the tools settings
 // in the Arduino menu for use with the debug enabled library and debug levels in that core. We can also compile in/out 
 // the watch dog timers and these are best left on especially once you are deploying the code.
 //
-const bool debug_g = true;
+const bool debug_g = false;
 const bool wdt_g   = true;
 
 //
@@ -90,7 +90,7 @@ const bool wdt_g   = true;
 // number unique and useful to identify the individual device.
 //
 const char *MFGR = "RiverView";      // Because my home office looks out over the ottwawa river ;)
-const char *MODL = "zPrH201";        // Presence Sensor H201
+const char *MODL = "zPrC601";        // Presence Sensor 
 
 //
 // Decide which or both radars to use depending on the CPU.
@@ -113,10 +113,10 @@ const char *MODL = "zPrH201";        // Presence Sensor H201
     #define RADAR1_RX             12
     #define RADAR1_TX             22
     #define RADAR2_SERIAL         Serial0     // This is unused
-    #define RADAR2_RX            -1          // Unused
-    #define RADAR2_TX            -1          // Unused
+    #define RADAR2_RX            -1           // Unused
+    #define RADAR2_TX            -1           // Unused
     const bool RADAR1_ENABLED     = true;
-    const bool RADAR2_ENABLED     = false;   // Unused
+    const bool RADAR2_ENABLED     = false;    // Unused
     const int  isr_resetButtonPin = 10;      
 #endif
 
@@ -799,6 +799,42 @@ void loop(void)
              ha_restart(8, nows);   
          }
      }
+
+     //
+     // The global constants become static variables so we can turn them on and off of we are using two 
+     // radars to create a kind of TDM to avoid interference between the two.
+     //
+     static bool radar1_active = RADAR1_ENABLED;
+     static bool radar2_active = RADAR2_ENABLED;
+
+     if (RADAR1_ENABLED && RADAR2_ENABLED) {
+         //
+         // We will swap the radars to avoid interference between them. We operate for 500ms on one antena, then 
+         // put it in command mode (which stops it transmitting). Then we put take the second antenna out of 
+         // command mode which start it functioning again. This is repeated continuously. While we can operate with 
+         // both radars at the same time, we seem to get a lot of spurious results.
+         //
+         uint32_t       slot      = millis()/500;       // TDM interval 
+         uint8_t        mode      = slot % 2;           // even slots are mode 0 , odd slots are mode 1
+         static uint8_t last_mode = 0xff;               // invalid starting mode to force a first switch
+         //
+         if (last_mode != mode) {                       // if not in the proper mode for our slot then
+             if (mode == 0) {                           // mode 0 should be using sing radar1 so enable it.
+                 radar1.enableTransmissions();
+                 radar2.disableTransmissions();         // and disable radar2
+                 last_mode = 0;                         // remember mode so we don't keep doing it.
+                 radar1_active = true;
+                 radar2_active = false;
+             } else {                                   // supposed to be using radar2 in mode 1 slot
+                 radar1.disableTransmissions();         
+                 radar2.enableTransmissions();          // and disable radar1.
+                 last_mode = 1;                         // remember mode so we don't keep doing it.
+                 radar1_active = false;
+                 radar2_active = true;
+             }
+         }
+     }
+
      //
      // Read as much data as we can from both radars, but guard against spending too much time here.
      // If we get too much data then we have a problem and will reboot. We stop when both radars have
@@ -811,8 +847,8 @@ void loop(void)
      const int    INFINITE_DIST= 100 * 100;                       // 100cm x 100 meters. 
      //
      while(true) {                                                // yes , we break out in the middle
-           bool r1_read = RADAR1_ENABLED? radar1.read() : false;  // see if radar1 has a packet
-           bool r2_read = RADAR2_ENABLED? radar2.read() : false;  // see if radar2 has a packet
+           bool r1_read = radar1_active? radar1.read() : false;  // see if radar1 has a packet
+           bool r2_read = radar2_active? radar2.read() : false;  // see if radar2 has a packet
            if (r1_read) { 
                radar1_last_reads = millis()/1000; 
                r1_count += 1;
@@ -824,9 +860,9 @@ void loop(void)
                r2_dist = radar2.isTargetDetected ? radar2.distanceToTarget : INFINITE_DIST;              
            }
            if (!r1_read && !r2_read) {                                   // No more data.
-              if ((r1_count > 0) && (r2_count > 0))  break;              // but we have data from both get out.
-              if ((r1_count > 0) && !RADAR2_ENABLED) break;              // data from only available r1
-              if ((r2_count > 0) && !RADAR1_ENABLED) break;              // data from only available r2
+              if ((r1_count > 0) && (r2_count > 0)) break;               // but we have data from both get out.
+              if ((r1_count > 0) && !radar2_active) break;              // data from only available r1
+              if ((r2_count > 0) && !radar1_active) break;              // data from only available r2
            }
            if ((r1_count > 100) || (r2_count > 100)) {   // guard against infinite loop, reboot if so
                if (debug_g) DPRINTF("abnormal amount of radar data - can't keep up\n");
@@ -834,13 +870,14 @@ void loop(void)
            }
      } 
 
-     if (!RADAR1_ENABLED) r1_dist = INFINITE_DIST;
-     if (!RADAR2_ENABLED) r2_dist = INFINITE_DIST;
+     if (!radar1_active) r1_dist = INFINITE_DIST;
+     if (!radar2_active) r2_dist = INFINITE_DIST;
+
      //
-     // We have read both radars so compute presence. Should both be >=0 at this point 
+     // We have read one of the radars so compute presence. Should both be >=0 at this point 
      // but keep this because we play with upper code a lot and this is a precondition.
      //
-     if ((r1_dist >= 0) && (r2_dist >= 0)) {                    // both radars were read.
+     if ((r1_dist >= 0) && (r2_dist >= 0)) {            
          ha_Presence = ((r1_dist <= ha_Range*100) || (r2_dist <= ha_Range*100)) ? 1 : 0;
      } 
      
@@ -863,7 +900,7 @@ void loop(void)
          uint32_t nows = millis()/1000;
          int32_t  deltas = nows - zigbee_last_notification;
          if (ha_Presence == 0) {
-             if (deltas >= ha_Frequency*10) {
+             if (deltas >= 1 + ha_Frequency*10) {       // 1 + avoid flickering at zero frequency setting
                  zbPresence.setBinaryInput(false);       
                  zbPresence.reportBinaryInput();
                  zigbee_last_notification = nows;
@@ -873,7 +910,7 @@ void loop(void)
                  if (debug_g) { DPRINTF("ha report NO Presence SUPPRESSED %us WAIT=%us\n", deltas, ha_Frequency*10); }
              }
          } else {
-             if (deltas >= ha_Frequency*5) {
+             if (deltas >= 1 + ha_Frequency*5) {
                  zbPresence.setBinaryInput(true);       
                  zbPresence.reportBinaryInput();
                  zigbee_last_notification = nows;
@@ -899,7 +936,7 @@ void loop(void)
         // And decide on the RGB led color/brigtness. Presence it shows white at the selected brightness.
         // Otherwise its a dim green that flashes periodically to indicate loop is running ok.
         //
-        if (ha_Presence == 1) {
+        if (last_ha_Presence == 1) {
             rgb_led_set(RGB_LED_WHITE, ha_Brightness);
         } else {
             int color =  (now_time) % 10 == 0 ? RGB_LED_GREEN : RGB_LED_OFF; 
