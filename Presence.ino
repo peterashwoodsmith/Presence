@@ -1,18 +1,34 @@
 //
-// This ESP32 ARDUINO program is a Zibgee end device that will interact with a solenoid chime door bell. It allows the door bell
-// button presses to become Zibgee binary sensors and allows playing of the bells via relays using inputs from zigbee.
-// It uses the 12v-24v AC power of the normal door bell.
+// This ESP32 ARDUINO program is a Zibgee end device that will interact with a serial based MM wave presence sensor.
+// This is built around the ESP32-H2 or C6 (For Zibgee) and works with the Waveshare 24mz presence sensor or likely any s3km1110 
+// based presence sensor with a serial interface.
+//
+// The H2 version supports a single radar and works very well. The C6 version is still work in progress as it has two 
+// radars and used time division between them to minimize interference, unfortuately the dual radar version on the C6
+// is not functioning very well and reports sporadic presence when there is none. So stick to the H2 single radar version
+// for now.
+//
+// The interface with the mmwave radar is based on the nice library by Sergey Ryazanov (2Grey) and can be found here:
+// https://github.com/2Grey/s3km1110
+//
+// I only made a few small changes to it to try to disable transmissions for the purposes of TDM use of two radars.
+// The H2 does not require these changes. I also include the code in this github.
+//
+// The Zigbee interface of course has a sensor that indicates presence detected, and has a number of controls that can
+// be set. For example you can set the Range at which point presence shoudl be declared, you can set the brightness of 
+// the RGB white light used to indicate prsence and you can configure a 'frequency' which basically control how often
+// presence or abscence can be reported to Zigbee (this is to minimize overloading Zigbee with too many events). There are 
+// also a few debug clusters which indicate things like how long the device has been up, what its last reboot reason was 
+// etc. The identify method is also supported and flashes the RGB led a bit to help identify this device.
 //
 // HARDWARE:
 //
-// On an ESP32-C6 we have a factory reset button, inputs for two door bell buttons, and outputs for two relays which drive the
-// door bell chimes. So you need a 12-24AC to 5v DC converter to drive it. The output of the AC to DC converter powers the 5V
-// input and ground of the Esp board. The raw AC is however is fed into to one side of the bell solenoids while the other 
-// side is switched by the normally open side of the switches. The switches are driven by the 3.3v output pins from the ESP32.
-// As a result the ESP32 can detect when door bells buttons are pressed and can also trigger the bells in any patter in wants by
-// simply setting the proper output pins that drive the switches. The exact timeing and sequence of course depends on the physical
-// characterastics of the solenoids and experimentation is required to get the proper duraction of the 'true' output to get a good
-// hard strike without undue buzzing.
+// Use an ESP32-H2 and a Waveshare 24mhz Presence sensor with a serial interface compatible with s3km1110. 
+// The wiring is simple. The H2 TX and RX pins are connected to the RX and TX pins on the radar board. The
+// 3.3 volt pins between the H2 and Radar board are connected as are the GND pins. Thats really all you need.
+//
+// The RGB LED on the H2 is used as a nightlight and if your enclose the project with the RBG led facing downwards
+// it can nicely light a corridor like a night light when a person is detected.
 //
 // BUILD NOTES:
 //          I built this on a Mac and had problems with the USB driver. Waveshare has a nice page describing how to put a new
@@ -33,29 +49,20 @@
 //
 // SOFTWARE:
 //
-// The software has three interrupt handlers. The first handles the factory reset button which erases all the zibbee data so
-// that rebinding is required. The second and third handlers will fire when one of the door bell buttons is pressed. 
-// These handlers are a bit special because if the zigee connection is not up we don't want to ignore a door bell press so we
-// simply pass the state of the button through to the switch. This in insures that if zibgee goes down or does not connect the
-// door bells function with a single strike per button press each. 
+// The software has one interrupt handler it handles the factory reset button which erases all the zibbee data so
+// that rebinding is required. 
 //
-// The setup() function of course configures zigbee clusters and sets all the attributes correctly then attaches to the 
-// zigbee network. Once the network is up we enter the main loop().
+// The setup() function of course configures the radar and the zigbee clusters and sets all the attributes correctly 
+// then attaches to the zigbee network. Once the network is up we enter the main loop().
 //
-// The main loop listens either for signs of button presses by the interrupt handlers, or from the HA binary switches. In 
-// Either case it looks up the proper tones and repetitions and ask the relays to play that pattern. After they are finished
-// it resets all the zibgee attributes. As a result zibgee will show when an external button is pressed so that can be used as
-// a trigger for other things, and it also allows playing from zibgee. In addition two the two manual buttons I also provide a
-// Z button which only can be triggered by Zibgee. This allows automations/notifications etc. to set a tone, repetition and 
-// then request it be played. 
+// The main basically reads the radar, checks for presence and if it finds it, looks at the range, if the range is
+// closer than the zigbee configured range then it lights the white LED and updates zigbee. 
 //
 // There is a watch dog timers that is fed in the main loop and a simple blue flashing led when trying to bind to zibeee and
 // a green flashing led when its fully bound.
 //
-// Since the solenoids/mechanical buttons can be quite noisy we need do quite a bit of debouncing. A few tricks are employed 
-// here. First we look for enough '1's so we read a bit of the signal to ensure its steady enough to warrant an event.
-// Next we completely ignore the interrupts if the solenoids are busy. Some external hardware would be useful here with some
-// capacitors/diods and perhaps Schmidt triggers but this is simpler albeit a bit ugly.
+// There are also callbacks we define that cause the various zibbee attributes to be set by the Zibbee task, so we
+// don't have to deal with it ourselves in the main loop.
 //
 // For debugging purposes we store a number of attributes in non volatile store (such as reboot reasons etc) and display them
 // as clusters for debugging.
@@ -73,8 +80,8 @@
 
 // Select which CPU, only one of course.
 //
-// #define ESP32_H2 1
-#define ESP32_C6 1
+#define ESP32_H2 1
+// #define ESP32_C6 1
 
 //
 // Set 1 and you'll get lots of useful info as it runs. For debugging the lower layer Zibgee see the tools settings
@@ -90,7 +97,7 @@ const bool wdt_g   = true;
 // number unique and useful to identify the individual device.
 //
 const char *MFGR = "RiverView";      // Because my home office looks out over the ottwawa river ;)
-const char *MODL = "zPrC601";        // Presence Sensor 
+const char *MODL = "zPrH201";        // Presence Sensor 
 
 //
 // Decide which or both radars to use depending on the CPU.
