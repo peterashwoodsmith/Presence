@@ -24,7 +24,7 @@
 // HARDWARE:
 //
 // Use an ESP32-H2 and a Waveshare 24mhz Presence sensor with a serial interface compatible with s3km1110. 
-// The wiring is simple. The H2 TX and RX pins are connected to the RX and TX pins on the radar board. The
+// The wiring is simple. The H2 TX and RX pins 22 & 12 are connected to the RX and TX pins on the radar board. The
 // 3.3 volt pins between the H2 and Radar board are connected as are the GND pins. Thats really all you need.
 //
 // The RGB LED on the H2 is used as a nightlight and if your enclose the project with the RBG led facing downwards
@@ -97,7 +97,7 @@ const bool wdt_g   = true;
 // number unique and useful to identify the individual device.
 //
 const char *MFGR = "RiverView";      // Because my home office looks out over the ottwawa river ;)
-const char *MODL = "zPrH201";        // Presence Sensor 
+const char *MODL = "zPrH205";        // Presence Sensor 
 
 //
 // Decide which or both radars to use depending on the CPU.
